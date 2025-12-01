@@ -1,0 +1,117 @@
+---
+title: "Investing the settings of integrity"
+author: "Ting-Hsuan Chen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+setwd('../../../')
+WRK <- getwd()
+OUT <- file.path(WRK, "TEgenomeSimulator_pub/output/tair10/report/")
+dir.create(file.path(OUT), recursive = TRUE, showWarnings = FALSE)
+knitr::opts_knit$set(root.dir=OUT)
+```
+
+```{r, load_TEsnoopeR, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+source(file.path(WRK, "TEgenomeSimulator/pub/script/functions.R"))
+```
+
+Tables and images saved in\
+`r OUT`
+
+## Breakdown TE gff files
+```{r, load_files, include=FALSE}
+# test1: alpha 0.5 beta 0.5
+n=1
+genomename <- paste0('tair10_simulated_itg_', n)
+short_gname <- paste0('tair10_itg_',n)
+SIM <- paste0(WRK, "output/TEgenomeSimulator_tair10_itg_", n, "_result/")
+gff <- paste0(short_gname, '_repeat_annotation_out_final.gff')
+tegff <- read.table(paste0(SIM, gff), header = F, sep = '\t', comment.char = "")
+breakdown1 <- te_breakdown_sim_genome(tegff)
+
+# test2: alpha 0.5 beta 0.75
+n=2
+genomename <- paste0('tair10_simulated_itg_', n)
+short_gname <- paste0('tair10_itg_',n)
+SIM <- paste0(WRK, "output/TEgenomeSimulator_tair10_itg_", n, "_result/")
+gff <- paste0(short_gname, '_repeat_annotation_out_final.gff')
+tegff <- read.table(paste0(SIM, gff), header = F, sep = '\t', comment.char = "")
+breakdown2 <- te_breakdown_sim_genome(tegff)
+
+# test3: alpha 0.5 beta 1
+n=3
+genomename <- paste0('tair10_simulated_itg_', n)
+short_gname <- paste0('tair10_itg_',n)
+SIM <- paste0(WRK, "output/TEgenomeSimulator_tair10_itg_", n, "_result/")
+gff <- paste0(short_gname, '_repeat_annotation_out_final.gff')
+tegff <- read.table(paste0(SIM, gff), header = F, sep = '\t', comment.char = "")
+breakdown3 <- te_breakdown_sim_genome(tegff)
+
+# test4: alpha 0.75 beta 0.5
+n=4
+genomename <- paste0('tair10_simulated_itg_', n)
+short_gname <- paste0('tair10_itg_',n)
+SIM <- paste0(WRK, "output/TEgenomeSimulator_tair10_itg_", n, "_result/")
+gff <- paste0(short_gname, '_repeat_annotation_out_final.gff')
+tegff <- read.table(paste0(SIM, gff), header = F, sep = '\t', comment.char = "")
+breakdown4 <- te_breakdown_sim_genome(tegff)
+
+# test5: alpha 1 beta 0.5
+n=5
+genomename <- paste0('tair10_simulated_itg_', n)
+short_gname <- paste0('tair10_itg_',n)
+SIM <- paste0(WRK, "output/TEgenomeSimulator_tair10_itg_", n, "_result/")
+gff <- paste0(short_gname, '_repeat_annotation_out_final.gff')
+tegff <- read.table(paste0(SIM, gff), header = F, sep = '\t', comment.char = "")
+breakdown5 <- te_breakdown_sim_genome(tegff)
+```
+
+```{r, combine_breakdown, include=FALSE}
+breakdown1$test <- 'a=0.5, b=0.5' 
+breakdown2$test <- 'a=0.5, b=0.75'
+breakdown3$test <- 'a=0.5, b=1'
+breakdown4$test <- 'a=0.75, b=0.5'
+breakdown5$test <- 'a=1, b=0.5'
+
+breakdown_all <- rbind(breakdown1, breakdown2, breakdown3, breakdown4, breakdown5)
+
+breakdown_all$test <- factor(breakdown_all$test, levels = c('a=1, b=0.5', 'a=0.75, b=0.5', 'a=0.5, b=0.5' , 'a=0.5, b=0.75', 'a=0.5, b=1'),
+                             ordered = TRUE)
+```
+
+```{r, plot_div, fig.width = 6, fig.asp = 0.8}
+plotwidth <- 6
+plotheight <- 4.8
+library(ggridges)
+library(viridis)
+theme_set(theme_minimal())
+plot <- ggplot(breakdown_all, aes(x = itg, y = test, fill = stat(x))) +
+  #geom_density_ridges(scale = 2, fill = "#006655", alpha = 0.7, rel_min_height = 0.01) +
+  geom_density_ridges_gradient(scale = 2, rel_min_height = 0.01, color = 'white') +
+  scale_fill_viridis(name = "Integrity", option = "C") +
+  scale_x_continuous(limits = c(-0.05, 1), breaks = seq(-0, 1, by = 0.2)) +
+  labs(title = 'Sequence integrity by various alpha and beta settings',
+       x = "Sequence integrity", y = "Tests") 
+plot
+```
+
+```{r, save_fig, echo=FALSE}
+png(filename = paste0(OUT, "sim_tair10_integrity_ridgeline_plot.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```

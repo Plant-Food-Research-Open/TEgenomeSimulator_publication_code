@@ -1,0 +1,202 @@
+---
+title: "Investing the relationship between TE copy number and genome size"
+author: "Ting-Hsuan Chen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+setwd('../../../')
+WRK <- getwd()
+OUT <- file.path(WRK, "TEgenomeSimulator_pub/output/tair10/report/")
+dir.create(file.path(OUT), recursive = TRUE, showWarnings = FALSE)
+knitr::opts_knit$set(root.dir=OUT)
+```
+
+```{r, load_TEsnoopeR, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+source(file.path(WRK, "TEgenomeSimulator/pub/script/functions.R"))
+```
+
+Tables and images saved in\
+`r OUT`
+
+## The proportion of the TE/nonTE sequence
+```{r, load_files, echo=FALSE}
+# test1: copy number 1 - 10
+n <-'1'
+m <- '10'
+genomename1 <- paste0('tair10_simulated_cn_', n, '_', m)
+short_gname1 <- paste0('tair10_cn_',n , '_', m)
+SIM1 <- paste0(WRK, "output/TEgenomeSimulator_tair10_cn_", n,"_", m, "_result/")
+gfai1 <- paste0(short_gname1, '_genome_sequence_out_final.fasta.fai')
+tfai1 <- paste0(short_gname1, '_repeat_sequence_out_final.fasta.fai')
+gff1 <- paste0(short_gname1, '_repeat_annotation_out_final.gff')
+genomefai1 <- read.table(paste0(SIM1, gfai1), header = F, sep = '\t')
+tefai1 <- read.table(paste0(SIM1, tfai1), header = F, sep = '\t', comment.char = "")
+tegff1 <- read.table(paste0(SIM1, gff1), header = F, sep = '\t', comment.char = "")
+
+
+# test2: copy number 5 - 100
+n <-'5'
+m <- '100'
+genomename2 <- paste0('tair10_simulated_cn_', n, '_', m)
+short_gname2 <- paste0('tair10_cn_',n , '_', m)
+SIM2 <- paste0(WRK, "output/TEgenomeSimulator_tair10_cn_", n,"_", m, "_result/")
+gfai2 <- paste0(short_gname2, '_genome_sequence_out_final.fasta.fai')
+tfai2 <- paste0(short_gname2, '_repeat_sequence_out_final.fasta.fai')
+gff2 <- paste0(short_gname2, '_repeat_annotation_out_final.gff')
+genomefai2 <- read.table(paste0(SIM2, gfai2), header = F, sep = '\t')
+tefai2 <- read.table(paste0(SIM2, tfai2), header = F, sep = '\t', comment.char = "")
+tegff2 <- read.table(paste0(SIM2, gff2), header = F, sep = '\t', comment.char = "")
+
+# test3: copy number 5 - 500
+n <-'5'
+m <- '500'
+genomename3 <- paste0('tair10_simulated_cn_', n, '_', m)
+short_gname3 <- paste0('tair10_cn_',n , '_', m)
+SIM3 <- paste0(WRK, "output/TEgenomeSimulator_tair10_cn_", n,"_", m, "_result/")
+gfai3 <- paste0(short_gname3, '_genome_sequence_out_final.fasta.fai')
+tfai3 <- paste0(short_gname3, '_repeat_sequence_out_final.fasta.fai')
+gff3 <- paste0(short_gname3, '_repeat_annotation_out_final.gff')
+genomefai3 <- read.table(paste0(SIM3, gfai3), header = F, sep = '\t')
+tefai3 <- read.table(paste0(SIM3, tfai3), header = F, sep = '\t', comment.char = "")
+tegff3 <- read.table(paste0(SIM3, gff3), header = F, sep = '\t', comment.char = "")
+
+# test4: copy number 5 - 1000
+n <-'5'
+m <- '1000'
+genomename4 <- paste0('tair10_simulated_cn_', n, '_', m)
+short_gname4 <- paste0('tair10_cn_',n , '_', m)
+SIM4 <- paste0(WRK, "output/TEgenomeSimulator_tair10_cn_", n,"_", m, "_result/")
+gfai4 <- paste0(short_gname4, '_genome_sequence_out_final.fasta.fai')
+tfai4 <- paste0(short_gname4, '_repeat_sequence_out_final.fasta.fai')
+gff4 <- paste0(short_gname4, '_repeat_annotation_out_final.gff')
+genomefai4 <- read.table(paste0(SIM4, gfai4), header = F, sep = '\t')
+tefai4 <- read.table(paste0(SIM4, tfai4), header = F, sep = '\t', comment.char = "")
+tegff4 <- read.table(paste0(SIM4, gff4), header = F, sep = '\t', comment.char = "")
+
+# test5: copy number 5 - 2000
+n <-'5'
+m <- '2000'
+genomename5 <- paste0('tair10_simulated_cn_', n, '_', m)
+short_gname5 <- paste0('tair10_cn_',n , '_', m)
+SIM5 <- paste0(WRK, "output/TEgenomeSimulator_tair10_cn_", n,"_", m, "_result/")
+gfai5 <- paste0(short_gname5, '_genome_sequence_out_final.fasta.fai')
+tfai5 <- paste0(short_gname5, '_repeat_sequence_out_final.fasta.fai')
+gff5 <- paste0(short_gname5, '_repeat_annotation_out_final.gff')
+genomefai5 <- read.table(paste0(SIM5, gfai5), header = F, sep = '\t')
+tefai5 <- read.table(paste0(SIM5, tfai5), header = F, sep = '\t', comment.char = "")
+tegff5 <- read.table(paste0(SIM5, gff5), header = F, sep = '\t', comment.char = "")
+```
+
+```{r, get_stat, echo=FALSE}
+genomesize1 <- sum(genomefai1$V2)
+tesize1 <- sum(tefai1$V2)
+te_perc1 <- tesize1 * 100 / (genomesize1)
+data.sum1 <- te_by_superfamily_sim_genome(tegff1)
+total_loci1 <- sum(data.sum1$count)
+
+genomesize2 <- sum(genomefai2$V2)
+tesize2 <- sum(tefai2$V2)
+te_perc2 <- tesize2 * 100 / (genomesize2)
+data.sum2 <- te_by_superfamily_sim_genome(tegff2)
+total_loci2 <- sum(data.sum2$count)
+
+genomesize3 <- sum(genomefai3$V2)
+tesize3 <- sum(tefai3$V2)
+te_perc3 <- tesize3 * 100 / (genomesize3)
+data.sum3 <- te_by_superfamily_sim_genome(tegff3)
+total_loci3 <- sum(data.sum3$count)
+
+genomesize4 <- sum(genomefai4$V2)
+tesize4 <- sum(tefai4$V2)
+te_perc4 <- tesize4 * 100 / (genomesize4)
+data.sum4 <- te_by_superfamily_sim_genome(tegff4)
+total_loci4 <- sum(data.sum4$count)
+
+genomesize5 <- sum(genomefai5$V2)
+tesize5 <- sum(tefai5$V2)
+te_perc5 <- tesize5 * 100 / (genomesize5)
+data.sum5 <- te_by_superfamily_sim_genome(tegff5)
+total_loci5 <- sum(data.sum5$count)
+
+```
+
+```{r, assemble_stat, echo=FALSE}
+dfstat <- data.frame(genomename = c('copynumber_test1', 'copynumber_test2', 'copynumber_test3', 'copynumber_test4', 'copynumber_test5'),
+                     copy_number = c('1-10', '5-100', '5-500', '5-1000', '5-2000'),
+                     genomesize = c(genomesize1, genomesize2, genomesize3, genomesize4, genomesize5),
+                     tesize = c(tesize1, tesize2, tesize3, tesize4, tesize5),
+                     teperc = c(te_perc1, te_perc2, te_perc3, te_perc4, te_perc5),
+                     teloci = c(total_loci1, total_loci2, total_loci3, total_loci4, total_loci5)) 
+
+kable(dfstat, format="markdown")
+```
+
+```{r, fig1, echo=FALSE, fig.width = 4, fig.asp = 1}
+plotwidth <- 4
+plotheight <- 4
+library(ggrepel)
+library(scales)
+plot <- ggplot(dfstat, aes(x = genomesize, y = teperc, size = teloci, label = copy_number, color = copy_number)) +
+  geom_point(aes(alpha = 0.7)) +
+  geom_text_repel(
+  data = dfstat,
+  aes(label = copy_number, color = copy_number),
+  size = 4,
+  box.padding = 1,
+  point.padding = 0.7,
+  force = 1,
+  force_pull = 0.01,
+  max.overlaps = Inf,
+  segment.size = 0.3,
+  show.legend = FALSE, fontface = 'bold'
+) +
+  scale_color_manual(values=c('#CC6666','#999966', '#669966', '#0099AA', '#996699')) +
+  labs(#title = "TE bases % vs genome size\ninfluenced by \nTE copy number\n range",
+       x = "Genome Size (Mb)", y = "TE bases %",
+       color = "Range of TE \nCopy Number Range",
+       size = "Total TE Loci ") +
+  scale_y_continuous(limits = c(0, 110), breaks = seq(0, 100, by = 20)) +
+  scale_x_continuous(
+    limits = c(0, 1.3e9),
+    breaks = seq(0, 1.3e9, by = 2.5e8),
+    labels = label_number(scale = 1e-6)
+  ) +
+  scale_size(range = c(2, 10)) +
+  guides(
+    color = "none",  # hides bubble color legend
+    alpha = "none"   # hides alpha legend
+  ) +
+  theme_bw() +
+  theme(#title = element_text(size = 12),
+        axis.text.y = element_text(size = rel(1.8)),
+        axis.text.x = element_text(size = rel(1.8), angle = 45, hjust = 1),
+        axis.title.x = element_text(size = rel(1.5)),
+        axis.title.y = element_text(size = rel(1.5)),
+        legend.title = element_text(size = rel(1.2)),
+        legend.text = element_text(size = rel(1.2)),
+        legend.key.size = unit(0.4, "cm"),
+        legend.background = element_blank())#,
+plot
+```
+
+```{r, save_fig, echo=FALSE}
+png(filename = paste0(OUT, "sim_tair10_copynumber_genomesize_bubbleplot.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+

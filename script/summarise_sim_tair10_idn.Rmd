@@ -1,0 +1,144 @@
+---
+title: "Investing the settings of identity"
+author: "Ting-Hsuan Chen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+setwd('../../../')
+WRK <- getwd()
+OUT <- file.path(WRK, "TEgenomeSimulator_pub/output/tair10/report/")
+dir.create(file.path(OUT), recursive = TRUE, showWarnings = FALSE)
+knitr::opts_knit$set(root.dir=OUT)
+```
+
+```{r, load_TEsnoopeR, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+source(file.path(WRK, "TEgenomeSimulator/pub/script/functions.R"))
+```
+
+Tables and images saved in\
+`r OUT`
+
+## Breakdown TE gff files
+```{r, load_files, include=FALSE}
+# test1: idn 90 - 100
+n <-'90'
+m <- '100'
+genomename <- paste0('tair10_simulated_idn_', n, '_', m)
+short_gname <- paste0('tair10_idn_',n , '_', m)
+SIM <- paste0(WRK, "output/TEgenomeSimulator_tair10_idn_", n,"_", m, "_result/")
+gff <- paste0(short_gname, '_repeat_annotation_out_final.gff')
+tegff <- read.table(paste0(SIM, gff), header = F, sep = '\t', comment.char = "")
+breakdown1 <- te_breakdown_sim_genome(tegff)
+
+# test2: idn 80 - 90
+n <-'80'
+m <- '90'
+genomename <- paste0('tair10_simulated_idn_', n, '_', m)
+short_gname <- paste0('tair10_idn_',n , '_', m)
+SIM <- paste0(WRK, "output/TEgenomeSimulator_tair10_idn_", n,"_", m, "_result/")
+gff <- paste0(short_gname, '_repeat_annotation_out_final.gff')
+tegff <- read.table(paste0(SIM, gff), header = F, sep = '\t', comment.char = "")
+breakdown2 <- te_breakdown_sim_genome(tegff)
+
+# test3: idn 70 - 80
+n <-'70'
+m <- '80'
+genomename <- paste0('tair10_simulated_idn_', n, '_', m)
+short_gname <- paste0('tair10_idn_',n , '_', m)
+SIM <- paste0(WRK, "output/TEgenomeSimulator_tair10_idn_", n,"_", m, "_result/")
+gff <- paste0(short_gname, '_repeat_annotation_out_final.gff')
+tegff <- read.table(paste0(SIM, gff), header = F, sep = '\t', comment.char = "")
+breakdown3 <- te_breakdown_sim_genome(tegff)
+
+# test4: idn 70 - 85
+n <-'70'
+m <- '85'
+genomename <- paste0('tair10_simulated_idn_', n, '_', m)
+short_gname <- paste0('tair10_idn_',n , '_', m)
+SIM <- paste0(WRK, "output/TEgenomeSimulator_tair10_idn_", n,"_", m, "_result/")
+gff <- paste0(short_gname, '_repeat_annotation_out_final.gff')
+tegff <- read.table(paste0(SIM, gff), header = F, sep = '\t', comment.char = "")
+breakdown4 <- te_breakdown_sim_genome(tegff)
+
+# test5: idn 70 - 90
+n <-'70'
+m <- '90'
+genomename <- paste0('tair10_simulated_idn_', n, '_', m)
+short_gname <- paste0('tair10_idn_',n , '_', m)
+SIM <- paste0(WRK, "output/TEgenomeSimulator_tair10_idn_", n,"_", m, "_result/")
+gff <- paste0(short_gname, '_repeat_annotation_out_final.gff')
+tegff <- read.table(paste0(SIM, gff), header = F, sep = '\t', comment.char = "")
+breakdown5 <- te_breakdown_sim_genome(tegff)
+
+# test6: idn 70 - 95
+n <-'70'
+m <- '95'
+genomename <- paste0('tair10_simulated_idn_', n, '_', m)
+short_gname <- paste0('tair10_idn_',n , '_', m)
+SIM <- paste0(WRK, "output/TEgenomeSimulator_tair10_idn_", n,"_", m, "_result/")
+gff <- paste0(short_gname, '_repeat_annotation_out_final.gff')
+tegff <- read.table(paste0(SIM, gff), header = F, sep = '\t', comment.char = "")
+breakdown6 <- te_breakdown_sim_genome(tegff)
+
+# test7: idn 70 - 100
+n <-'70'
+m <- '100'
+genomename <- paste0('tair10_simulated_idn_', n, '_', m)
+short_gname <- paste0('tair10_idn_',n , '_', m)
+SIM <- paste0(WRK, "output/TEgenomeSimulator_tair10_idn_", n,"_", m, "_result/")
+gff <- paste0(short_gname, '_repeat_annotation_out_final.gff')
+tegff <- read.table(paste0(SIM, gff), header = F, sep = '\t', comment.char = "")
+breakdown7 <- te_breakdown_sim_genome(tegff)
+
+```
+
+```{r, combine_breakdown, include=FALSE}
+breakdown1$test <- 'test01: 90-100' 
+breakdown2$test <- 'test02: 80-90'
+breakdown3$test <- 'test03: 70-80'
+breakdown4$test <- 'test04: 70-85'
+breakdown5$test <- 'test05: 70-90'
+breakdown6$test <- 'test06: 70-95'
+breakdown7$test <- 'test07: 70-100'
+
+breakdown_all <- rbind(breakdown1, breakdown2, breakdown3, breakdown4, breakdown5,
+                       breakdown6, breakdown7)
+
+breakdown_all$test <- factor(breakdown_all$test, levels = c('test07: 70-100', 'test06: 70-95',
+                                                            'test05: 70-90', 'test04: 70-85', 'test03: 70-80', 'test02: 80-90', 'test01: 90-100'),
+                             ordered = TRUE)
+```
+
+```{r, plot_div, fig.width = 6, fig.asp = 0.8}
+plotwidth <- 6
+plotheight <- 4.8
+library(ggridges)
+theme_set(theme_minimal())
+plot <- ggplot(breakdown_all, aes(x = div, y = test, fill = stat(x))) +
+  geom_density_ridges(scale = 2, fill = "#006655", alpha = 0.7, rel_min_height = 0.01) +
+  scale_x_continuous(limits = c(-0.05, 1), breaks = seq(-0, 1, by = 0.2)) +
+  labs(title = 'Sequence divergence by various identity settings',
+       x = "Sequence divergence", y = "Tests") 
+plot
+```
+
+```{r, save_fig, echo=FALSE}
+png(filename = paste0(OUT, "sim_tair10_identity_ridgeline_plot.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```

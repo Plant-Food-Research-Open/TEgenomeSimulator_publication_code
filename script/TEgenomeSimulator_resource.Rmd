@@ -1,0 +1,201 @@
+---
+title: "Visualisation of TEgenomeSimulator resource usage"
+author: "Ting-Hsuan Chen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+setwd('../../../')
+WRK <- getwd()
+OUT <- file.path(WRK, "TEgenomeSimulator_pub/output/sim_resource/")
+dir.create(file.path(OUT), recursive = TRUE, showWarnings = FALSE)
+knitr::opts_knit$set(root.dir=OUT)
+```
+
+```{r, load_TEsnoopeR, include=FALSE}
+library(tidyverse)
+library(lubridate)
+```
+
+Tables and images saved in\
+`r OUT`
+
+```{r, load_files, echo=FALSE}
+# Read the data (if stored as CSV)
+df <- read_csv(file.path(OUT, "TEgenomeSimulator_resource_stats.csv"))
+colnames(df) <- c("Task", "Run mode", "To mask genome", "Multi-threading feasable", "Cores", 
+                  "Job wall-clock time", "CPU Utilized", "Core-walltime", "CPU Efficiency", 
+                  "Memory utilised", "Simulated genome size")
+```
+
+```{r convert_table}
+# Convert time columns to seconds
+library(stringr)
+
+convert_to_seconds <- function(time_str) {
+  if (is.na(time_str)) return(NA)
+  
+  # Handle "D-HH:MM:SS"
+  if (str_detect(time_str, "-")) {
+    parts <- str_split(time_str, "-", simplify = TRUE)
+    days <- as.numeric(parts[1])
+    hms <- str_split(parts[2], ":", simplify = TRUE)
+    if (length(hms) == 3) {
+      hours <- as.numeric(hms[1])
+      minutes <- as.numeric(hms[2])
+      seconds <- as.numeric(hms[3])
+      return(days * 86400 + hours * 3600 + minutes * 60 + seconds)
+    } else {
+      return(NA)
+    }
+  }
+  
+  # Handle "HH:MM:SS"
+  parts <- str_split(time_str, ":", simplify = TRUE)
+  parts <- as.numeric(parts)
+  if (length(parts) == 3) {
+    return(parts[1]*3600 + parts[2]*60 + parts[3])
+  } else if (length(parts) == 2) {
+    return(parts[1]*60 + parts[2])
+  } else {
+    return(NA)
+  }
+}
+```
+
+```{r convert2sec}
+
+df <- df %>%
+  mutate(
+    wall_time_sec = map_dbl(`Job wall-clock time`, convert_to_seconds),
+    cpu_time_sec = map_dbl(`CPU Utilized`, convert_to_seconds),
+    core_walltime_sec = map_dbl(`Core-walltime`, convert_to_seconds),
+    memory_gb = case_when(
+      str_detect(`Memory utilised`, "GB") ~ as.numeric(str_remove(`Memory utilised`, " GB")),
+      str_detect(`Memory utilised`, "MB") ~ as.numeric(str_remove(`Memory utilised`, " MB")) / 1024,
+      TRUE ~ NA_real_
+    ),
+    cpu_eff = as.numeric(str_remove(`CPU Efficiency`, "%")) / 100
+  )
+```
+
+```{r plot_all, , fig.width = 10, fig.asp = 0.5}
+library(tidyverse)
+library(ggrepel)
+plotwidth <- 10
+plotheight <- 5
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+# Define the legend order for mode 0 tasks
+task_order_mode2 <- c("TAIR10", "O_sativa", "Z_mays", "dm6", "D_rario")
+
+df <- df %>% mutate(
+    Task = gsub("100000k\\*10", "1000000k", Task))
+
+# Mode 0 tasks (bubble points)
+df_mode0 <- df %>%
+  filter(`Run mode` == 0) %>% filter(Task!="Random sequence 10k") %>%
+  mutate(
+    task_label = gsub("Random sequence ", "", Task),
+    task_label = factor(task_label),
+    type = "mode 0"
+  )
+
+# Mode 1 tasks (TE copy number range series, shaped points)
+df_mode1 <- df %>%
+  filter(`Run mode` == 1, str_detect(Task, "TE copy number range")) %>%
+  mutate(
+    task_label = str_replace(Task, "TAIR10 TE copy number range ", "Copy "),
+    type = "mode 1"
+  )
+
+# Mode 2 tasks (TE genome approximation, shaped points)
+df_mode2 <- df %>%
+  filter(`Run mode` == 2) %>%
+  mutate(
+    task_label = gsub(" TE composition approximation", "", Task),
+    task_label = factor(task_label, levels = task_order_mode2),
+    type = "mode 2"
+  )
+
+# Combine both
+df_combined <- bind_rows(df_mode0, df_mode1, df_mode2)
+
+# Plot
+plot <- ggplot(df_combined, aes(
+  x = wall_time_sec,
+  y = memory_gb,
+  size = `Simulated genome size`,
+  label = task_label
+)) +
+  # Mode 0: Bubble (circle)
+  geom_point(
+    data = df_combined %>% filter(type == "mode 0"),
+    aes(color = task_label),
+    shape = 16, alpha = 0.4
+  ) +
+  # Mode 1: Bubble (circle)
+  geom_point(
+    data = df_combined %>% filter(type == "mode 1"),
+    aes(color = task_label),
+    shape = 16, alpha = 0.4
+  ) +
+  # Mode 2: Bubble (circle)
+  geom_point(
+    data = df_combined %>% filter(type == "mode 2"),
+    aes(color = task_label),
+    shape = 16, alpha = 0.4
+  ) +
+  facet_grid(cols = vars(type)) +
+  scale_x_continuous(limits = c(-1000, 51000)) +
+  scale_y_continuous(limits = c(-5, 40)) +
+  geom_text_repel(
+  data = df_combined,
+  aes(label = task_label, color = task_label),
+  size = 4,
+  box.padding = 1,
+  point.padding = 0.7,
+  force = 4.5,
+  force_pull = 0.0001,
+  max.overlaps = Inf,
+  segment.size = 0.3,
+  show.legend = FALSE, fontface = 'bold'
+) +
+  guides(color = "none") +  # hide color legend
+  scale_size_continuous(range = c(4, 20), name = "Genome size") +
+  labs(
+    title = "TEgenomeSimulator\nWall-clock time vs Memory usage",
+    x = "Wall-clock time (seconds)",
+    y = "Memory usage (GB)",
+    color = "Task"
+  ) +
+  theme_bw() +
+  theme(
+    title = element_text(size = rel(1.2)),
+    axis.text.x = element_text(size = rel(1.5), angle = 45, hjust = 1),
+    axis.text.y = element_text(size = rel(1.5)),
+    axis.title.x = element_text(size = rel(1.5)),
+    axis.title.y = element_text(size = rel(1.5)),
+    legend.title = element_text(size = rel(1.5)),
+    legend.text = element_text(size = rel(1.5)),
+    legend.key.size = unit(0.4, "cm"),
+    strip.text = element_text(size = rel(1.5))
+  )
+plot
+```
+
+
+```{r, save_fig, echo=FALSE}
+png(filename = paste0(OUT, "tegenomesimulator_resources.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```

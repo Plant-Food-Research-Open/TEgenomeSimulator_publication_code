@@ -1,0 +1,45 @@
+# ignore uncompressed fasta and gff files and the related files
+input/*.fa
+
+input/*.fna
+
+input/*.fasta
+
+input/*.embl
+input/*.fai
+input/*.dat
+input/*.out
+input/*.reformated
+input/*.emptfixed
+input/*.gff
+input/*.gff3
+input/*.align
+input/*.stitched
+
+# ignore uncompressed TE lib
+input/rice6.9.5.liban
+input/maizeTE11122019
+input/Dmel-families.fa
+input/danRer10-families.fa
+input/athrep.updated.nonredun.fasta
+input/athrep.updated.nonredun.noCenSatelli.fasta
+
+# ignore .err
+input/*.err
+
+# ignore tables
+input/*.table
+input/*.tsv
+input/*.csv
+
+# ignore .yml
+input/*.yml
+
+# ignore .db
+input/*.db
+
+# ignore large file > 100 Mb
+input/GCF_034140825.1_ASM3414082v1_genomic.fna.gz
+input/GCF_049306965.1_GRCz12tu_genomic.fna.gz
+input/GCF_902167145.1_Zm-B73-REFERENCE-NAM-5.0_genomic.fna.gz
+

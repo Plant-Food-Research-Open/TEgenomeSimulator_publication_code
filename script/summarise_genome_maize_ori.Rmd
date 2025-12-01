@@ -1,0 +1,227 @@
+---
+title: "A summary of the TE landscape of the original maize genome"
+author: "Ting-Hsuan Chen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    highlight: tango
+---
+
+## 0 Setup
+### 0.1 Setup genome name and directory
+```{r setup, include=FALSE}
+genomename <- 'maize_original'
+short_gname <- 'maize_run3'
+setwd('../../../')
+WRK <- getwd()
+SIM <- file.path(WRK, "TEgenomeSimulator_pub/output/TEgenomeSimulator_maize_run3_result/")
+OUT <- file.path(WRK, "TEgenomeSimulator_pub/output/sim_report/")
+dir.create(file.path(OUT), recursive = TRUE, showWarnings = FALSE)
+knitr::opts_knit$set(root.dir=OUT)
+```
+### 0.2 Load libraries
+```{r, load_TEsnoopeR, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+source(file.path(WRK, "TEgenomeSimulator/pub/script/functions.R"))
+```
+
+Tables and images saved in\
+`r OUT`
+
+### 0.3 Load files
+```{r, load_files, include=FALSE}
+sum_file <- read.table(paste0(SIM, 'summarise_repeatmasker_out_family.txt'), header = T, sep = '\t', comment.char = "")
+data.sum <- sum_file |> 
+  dplyr::mutate(superfamily = gsub("auto", "", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("nona", "", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/Helitron", "RC\\/Helitron", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/CMC.*", "DNA\\/CACTA", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/MULE.*", "DNA\\/MULE", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/MuDR.*", "DNA\\/MULE", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/PIF-Harbinger", "DNA\\/Harbinger", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/TcMar.*", "DNA\\/Mariner", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/hAT.*", "DNA\\/hAT", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("LTR\\/Gypsy", "LTR\\/Ty3", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA$", "DNA\\/unknown", superfamily)) |>
+  group_by(superfamily) |> 
+  summarise(count = sum(copynumber), bp = sum(total_length), family_count = n()) |> 
+  rename(TE = superfamily) |>
+  arrange(TE)
+
+rmout <- read.table(paste0(SIM, 'processed_output.temp'), header = T, sep = '\t', comment.char = "")
+rmout <- rmout |> mutate(div = as.numeric(1 - identity), itg = as.numeric(length_ratio))  |>
+  dplyr::mutate(superfamily = gsub("auto", "", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("nona", "", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/Helitron", "RC\\/Helitron", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/CMC.*", "DNA\\/CACTA", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/MULE.*", "DNA\\/MULE", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/MuDR.*", "DNA\\/MULE", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/PIF-Harbinger", "DNA\\/Harbinger", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/TcMar.*", "DNA\\/Mariner", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/hAT.*", "DNA\\/hAT", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("LTR\\/Gypsy", "LTR\\/Ty3", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA$", "DNA\\/unknown", superfamily)) |>
+    dplyr::mutate(itg = if_else(itg > 1, 1, itg))
+
+rmtbl <- paste0(SIM, "repeatmasker/GCF_902167145.1_Zm-B73-REFERENCE-NAM-5.0_genomic.fna.tbl")
+```
+
+## 1. The proportion of the TE/nonTE sequence
+```{r, get_masked_size, echo=FALSE}
+lines <- readLines(rmtbl)
+
+# Initialize variables
+total_length <- NA
+bases_masked <- NA
+
+# Extract values
+for (line in lines) {
+  if (grepl("total length", line)) {
+    genomesize <- gsub(".*total length:", "", line)
+    genomesize <- gsub("bp.*", "", genomesize)
+    genomesize <- as.numeric(genomesize)
+  }
+  if (grepl("bases masked", line)) {
+    bases_masked <- gsub(".*bases masked:", "", line)
+    bases_masked <- gsub("bp.*", "", bases_masked)
+    bases_masked <- as.integer(bases_masked)
+    perc_masked <- gsub(".*\\(", "", line)
+    perc_masked <- gsub("%.*", "", perc_masked)
+    perc_masked <- as.numeric(perc_masked)
+  }
+}
+
+# Print extracted values
+cat("Total genome size:", genomesize, "bp\n")
+cat("Bases masked:", bases_masked, "bp\n")
+cat("Percentage masked:", perc_masked, "%\n")
+
+```
+
+
+```{r, fig1, echo=FALSE, fig.width = 4, out.width="30%"}
+plotwidth <- 4
+plotheight <- 4
+plot <- plot_sim_genome_bp_piechart(genomesize, bases_masked, genomename)
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot
+```
+
+```{r, save_fig1, echo=FALSE}
+png(filename = paste0(OUT, "genome_size_piegraph_", genomename, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+File saved as: genome_size_piegraph_`r genomename`.png 
+
+## 2. Breaking down the simulated TEs by superfamily
+```{r, table1, echo=FALSE}
+total_loci <- sum(data.sum$count)
+total_bp <- sum(data.sum$bp)
+total_fam <- sum(data.sum$family_count)
+data_sum <- data.sum
+data_sum$total_loci <- rep(total_loci, nrow(data_sum))
+data_sum$total_bp <- rep(total_bp, nrow(data_sum))
+data_sum <- data_sum %>% 
+  mutate(loci_percentage = round(100*(count/total_loci), 2), bp_percentage = round(100*(bp/total_bp), 2), family_percentage = round(100*(family_count/total_fam), 2)) %>%
+  rename(TE_superfamily = TE, loci = count) %>%
+  select(-total_loci, -total_bp)
+total_row <- data.frame(TE_superfamily = "Total", loci = total_loci, bp = total_bp, family_count = total_fam, loci_percentage = 100, bp_percentage = 100, family_percentage = 100)
+data_sum <- rbind(data_sum, total_row)
+write.table(data_sum, paste0(OUT, "genome_summary_TEsuperfamily_", genomename, ".csv"), col.names = T, row.names = F, sep = ",")
+kable(data_sum, format="markdown")
+```
+
+Saved file name: genome_summary_TEsuperfamily_`r genomename`.csv 
+
+### 2.1 Total TE loci categorised by TE superfamily
+
+```{r, fig2, echo=FALSE, out.width="60%"}
+plotwidth <- 8
+plotheight <- 8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot <- plot_te_loci_piechart(data.sum, genomename)
+plot
+```
+
+```{r, save_fig2, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_piegraph_", genomename, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+High quality image saved in\
+`r OUT`
+
+Saved file name: te_loci_piegraph_`r genomename`.png 
+
+### 2.2 Total simulated TE bases categorised by TE superfamily
+
+
+```{r, fig3, echo=FALSE, out.width="60%"}
+plotwidth <- 8
+plotheight <- 8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot <- plot_te_bp_piechart(data.sum, genomename)
+plot
+```
+
+```{r, save_fig3, echo=FALSE}
+png(filename = paste0(OUT, "te_bp_piegraph_", genomename, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file name: te_bp_piegraph_`r genomename`.png 
+
+### 2.3 The distribution of TE loci divergence 
+
+
+```{r, fig9, echo=FALSE, fig.width = 8, fig.asp = .5, out.width="60%"}
+plotwidth <- 8
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax <- 110000
+ybreak <- 20000
+plot <- plot_ori_divergence_by_loci(rmout, ymax, ybreak, genomename)
+plot
+```
+
+```{r, save_fig9, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_divergence_", genomename, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file name: te_loci_divergence_`r genomename`.png 
+
+
+### 2.4 The distribution of TE loci integrity
+
+```{r, fig10, echo=FALSE, fig.width = 8, fig.asp = .5}
+plotwidth <- 8
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax <- 300000
+ybreak <- 50000
+plot <- plot_ori_integrity_by_loci(rmout |> filter(itg >= 0 & itg <= 1), ymax, ybreak, genomename)
+plot
+```
+
+```{r, save_fig10, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_integrity_", genomename, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file name: te_loci_integrity_`r genomename`.png 

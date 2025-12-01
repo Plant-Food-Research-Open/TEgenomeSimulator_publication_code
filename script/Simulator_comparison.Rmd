@@ -1,0 +1,949 @@
+---
+title: "Comparisons between TEgenomeSimulator, denovoTE-eval, and Garlic"
+author: "Ting-Hsuan Chen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+# expecting to initially be in the folder "TEgenomeSimulator/pub/script" of the cloned repository
+setwd('../../')
+WRK <- getwd()
+OUT <- file.path(WRK, "pub/output/simulator_compare/")
+dir.create(file.path(OUT), recursive = TRUE, showWarnings = FALSE)
+knitr::opts_knit$set(root.dir=OUT)
+```
+
+```{r, load_packages, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(scales)
+source(file.path(WRK, "pub/script/functions.R"))
+```
+
+## 1. TEgenomeSimulator vs denovoTEeval
+
+```{r, load_files_tegs, echo=FALSE}
+gfai1 <- file.path(WRK, 'pub/output/mode0/output/TEgenomeSimulator_m0_chr10000k_result/m0_chr10000k_genome_sequence_out_final.fasta.fai')
+tfai1 <- file.path(WRK, 'pub/output/mode0/output/TEgenomeSimulator_m0_chr10000k_result/m0_chr10000k_repeat_sequence_out_final.fasta.fai')
+gff1 <- file.path(WRK, 'pub/output/mode0/output/TEgenomeSimulator_m0_chr10000k_result/m0_chr10000k_repeat_annotation_out_final.gff')
+genomefai1 <- read.table(gfai1, header = F, sep = '\t')
+tefai1 <- read.table(tfai1, header = F, sep = '\t', comment.char = "")
+tegff1 <- read.table(gff1, header = F, sep = '\t', comment.char = "")
+```
+
+```{r, data_sum_tegs, include=FALSE}
+breakdown1 <- te_breakdown_sim_genome(tegff1)
+data.sum1 <- te_by_superfamily_sim_genome(tegff1)
+```
+
+```{r, load_files_denovote, echo=FALSE}
+gfai2 <- file.path(WRK, 'pub/output/denovoTEeval/m0_chr10000k_out_sequence_nest.fasta.fai')
+tfai2 <- file.path(WRK, 'pub/output/denovoTEeval/m0_chr10000k_out_repeats.fasta.fai')
+gff2 <- file.path(WRK, 'pub/output/denovoTEeval/m0_chr10000k_out_repeats_nest.gff')
+genomefai2 <- read.table(gfai2, header = F, sep = '\t')
+tefai2 <- read.table(tfai2, header = F, sep = '\t', comment.char = "")
+tegff2 <- read.table(gff2, header = F, sep = '\t', comment.char = "")
+```
+
+```{r, data_sum_denovote, include=FALSE}
+tegff2 <- convert_denovote_gff(tegff2)
+breakdown2 <- te_breakdown_sim_genome(tegff2)
+data.sum2 <- te_by_superfamily_sim_genome(tegff2)
+```
+
+### 1.01 The proportion of TE/nonTE sequence
+**Important:** denovoTE-eval doesn't update simulated repeat.fa after nested insertion. So the TE bases calculated from its output repeat.fa doesn't include nested TE insertion sequences. Need to calculate TE bases from TE gff file.
+
+```{r, get_stat, echo=FALSE}
+genomesize1 <- sum(genomefai1$V2)
+tesize1 <- sum(tefai1$V2)
+nonte1 <- genomesize1 - tesize1
+te_perc1 <- tesize1 * 100 / (genomesize1)
+genomesize2 <- sum(genomefai2$V2)
+tesize2 <- tegff2 |> mutate(V10 = V5-V4 + 1) |> pull(V10) |> sum()
+nonte2 <- genomesize2 - tesize2
+te_perc2 <- tesize2 * 100 / (genomesize2)
+# Combine stat
+df_stat <- data.frame(bases = c(tesize1, nonte1, tesize2, nonte2), 
+                      perc = c(te_perc1, (100-te_perc1), te_perc2, (100-te_perc2)),
+                      feature = c(rep(c("TE", "nonTE"), 2)),
+                      simulator=c(rep("TEGS", 2), rep("dnvTEe", 2))
+                      )
+df_stat <- df_stat |> group_by(simulator) |> mutate(cum_sum = cumsum(bases)) |> mutate(midpoint = (cum_sum- bases/2)) |> ungroup()
+```
+
+```{r, plot_stat_tegs_denovote, echo=FALSE, fig.width = 3, fig.asp = 1}
+plotwidth <- 3
+plotheight <- 3
+plot <- ggplot(df_stat, aes(x = simulator, y = bases, fill = feature)) +
+  geom_bar(stat = "identity", color = "white") +
+  geom_text(data = subset(df_stat, perc > 3), aes(label = sprintf("%.1f%%", perc)), 
+            vjust = 0.5, color = "white", fontface = "bold",size = rel(4), position = position_stack(vjust = 0.5)) +
+  scale_fill_manual(values = c("TE" = "black", "nonTE" = "grey50")) +
+  scale_y_continuous(labels = label_number(scale = 1e-6)) +
+  labs(x = "Simulator", y = "Million bases", fill = "Feature") +
+  ggtitle("TE/nonTE-occupied bases \ndnvTEe vs TEGS") +
+  theme(title = element_text(size = 8),
+            axis.text.y = element_text(size = rel(1.3)),
+            axis.text.x = element_text(size = rel(1.3)),
+            axis.title.x = element_blank(),
+            axis.title.y = element_text(size = rel(1.4)),
+            legend.title = element_blank(),
+            legend.text = element_text(size = rel(1)),
+            legend.key.size = unit(0.5, "cm"),
+            legend.background = element_blank(),
+            panel.background = element_rect(fill = "white", color = "black"))
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot
+```
+
+
+```{r, save_fig1.01.01, echo=FALSE}
+png(filename = paste0(OUT, "nonTEbases_dnvTEvTEGS.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+### 1.02 TE composition
+```{r, table1.02.01, echo=FALSE}
+# TEGSm0_10000k
+total_loci1 <- sum(data.sum1$count)
+total_bp1 <- sum(data.sum1$bp)
+total_fam1 <- sum(data.sum1$family_count)
+data_sum1 <- data.sum1
+data_sum1$total_loci <- rep(total_loci1, nrow(data_sum1))
+data_sum1$total_bp <- rep(total_bp1, nrow(data_sum1))
+data_sum1 <- data_sum1 %>% 
+  mutate(loci_percentage = round(100*(count/total_loci), 2), bp_percentage = round(100*(bp/total_bp), 2), family_percentage = round(100*(family_count/total_fam1), 2)) %>%
+  rename(TE_superfamily = TE, loci = count) %>%
+  select(-total_loci, -total_bp)
+total_row1 <- data.frame(TE_superfamily = "Total", loci = total_loci1, bp = total_bp1, family_count = total_fam1, loci_percentage = 100, bp_percentage = 100, family_percentage = 100)
+data_sum1 <- rbind(data_sum1, total_row1)
+kable(data_sum1, format="markdown")
+```
+
+```{r, table1.02.02, echo=FALSE}
+# denovoTEeval
+total_loci2 <- sum(data.sum2$count)
+total_bp2 <- sum(data.sum2$bp)
+total_fam2 <- sum(data.sum2$family_count)
+data_sum2 <- data.sum2
+data_sum2$total_loci <- rep(total_loci2, nrow(data_sum2))
+data_sum2$total_bp <- rep(total_bp2, nrow(data_sum2))
+data_sum2 <- data_sum2 %>% 
+  mutate(loci_percentage = round(100*(count/total_loci), 2), bp_percentage = round(100*(bp/total_bp), 2), family_percentage = round(100*(family_count/total_fam2), 2)) %>%
+  rename(TE_superfamily = TE, loci = count) %>%
+  select(-total_loci, -total_bp)
+total_row2 <- data.frame(TE_superfamily = "Total", loci = total_loci2, bp = total_bp2, family_count = total_fam1, loci_percentage = 100, bp_percentage = 100, family_percentage = 100)
+data_sum2 <- rbind(data_sum2, total_row2)
+kable(data_sum2, format="markdown")
+```
+
+```{r, fig1.02.01, echo=FALSE, fig.width = 5.8, fig.asp = 1, out.width="60%"}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 5.8
+plotheight <- 5.8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+genomename1='TEGSm0_10Mb'
+plot <- plot_te_loci_piechart(data.sum1, genomename1)
+plot
+```
+```{r, save_fig1.02.01, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_piegraph_", genomename1, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+```{r, fig1.02.02, echo=FALSE, fig.width = 5.8, fig.asp = 1, out.width="60%"}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 5.8
+plotheight <- 5.8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+genomename2='dnvTEe_10Mb'
+plot <- plot_te_loci_piechart(data.sum2, genomename2)
+plot
+```
+```{r, save_fig1.02.02, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_piegraph_", genomename2, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+### 1.03 Total simulated TE bases categorised by TE superfamily
+```{r, fig1.03.01, echo=FALSE, fig.width = 5.8, fig.asp = 1, out.width="60%"}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 5.8
+plotheight <- 5.8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot <- plot_te_bp_piechart(data.sum1, genomename1)
+plot
+```
+
+```{r, save_fig1.03.01, echo=FALSE}
+png(filename = paste0(OUT, "te_bp_piegraph_", genomename1, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+```{r, fig1.03.02, echo=FALSE, fig.width = 5.8, fig.asp = 1, out.width="60%"}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 5.8
+plotheight <- 5.8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot <- plot_te_bp_piechart(data.sum2, genomename2)
+plot
+```
+```{r, save_fig1.03.02, echo=FALSE}
+png(filename = paste0(OUT, "te_bp_piegraph_", genomename2, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+### 1.04 The distribution of TE loci divergence 
+```{r, fig1.04.01, echo=FALSE, fig.width = 6, fig.asp = .67}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 6
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax=800
+ybreak=250
+plot <- plot_sim_divergence_by_loci(breakdown1 |> filter(div >= 0), ymax, ybreak, genomename1)
+plot
+```
+
+```{r, save_fig1.04.01, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_divergence_", genomename1, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+```{r, fig1.04.02, echo=FALSE, fig.width = 6, fig.asp = .67}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 6
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax=800
+ybreak=250
+plot <- plot_sim_divergence_by_loci(breakdown2 |> filter(div >= 0), ymax, ybreak, genomename2)
+plot
+```
+```{r, save_fig1.04.02, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_divergence_", genomename2, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+### 1.05 The distribution of TE loci integrity
+
+```{r, fig1.05.01, echo=FALSE, echo=FALSE, fig.width = 8, fig.asp = .5}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 8
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax=1800
+ybreak=250
+plot <- plot_sim_integrity_by_loci(breakdown1 |> filter(itg >= 0), ymax, ybreak, genomename1)
+plot
+```
+
+```{r, save_fig1.05.01, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_integrity_", genomename1, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, fig1.05.02, echo=FALSE, echo=FALSE, fig.width = 8, fig.asp = .5}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 8
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax=2000
+ybreak=250
+plot <- plot_sim_integrity_by_loci(breakdown2 |> filter(itg >= 0), ymax, ybreak, genomename2)
+plot
+```
+
+Fragment setting in denovoTE-eval:
+```text
+def fragment (seq):
+    frag_size = 100
+    len_seq =len(seq)
+    if len_seq < 500:
+        frag_size = random.randint(70,90)
+    else:
+        frag_size = random.randint(40,90)
+    cut_length = int(len_seq*((100 - frag_size)/100.0))
+    return seq[cut_length:], frag_size, cut_length
+```
+
+```{r, save_fig1.05.02, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_integrity_", genomename2, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+
+## 2. TEgenomeSimulator vs Garlic
+
+```{r, load_files_part2, echo=FALSE}
+# Original tair10 chr1
+gfai0 <- file.path(WRK, 'pub/input/GCF_000001735.4_TAIR10.1_genomic_chr1.fna.fai')
+ntefai0 <- file.path(WRK, 'pub/output/TEgenomeSimulator_tair10_ch1_m2_result/GCF_000001735.4_TAIR10.1_genomic_chr1.fna.masked.reformatted.nonTE.emptfixed.fai')
+gff0 <- file.path(WRK, 'pub/input/GCF_000001735.4_TAIR10.1_genomic_chr1.fna.out.gff')
+genomefai0 <- read.table(gfai0, header = F, sep = '\t')
+nontefai0 <- read.table(ntefai0, header = F, sep = '\t')
+tegff0 <-read.table(gff0, header = F, sep = '\t')
+# TEGS tair10 chr1 mode 2
+gfai3 <- file.path(WRK, 'pub/output/TEgenomeSimulator_tair10_ch1_m2_result/tair10_ch1_m2_genome_sequence_out_final.fasta.fai')
+gff3 <- file.path(WRK, 'pub/output/TEgenomeSimulator_tair10_ch1_m2_result/tair10_ch1_m2_repeat_annotation_out_final.gff')
+genomefai3 <- read.table(gfai3, header = F, sep = '\t')
+tegff3 <- read.table(gff3, header = F, sep = '\t', comment.char = "")
+# TEGS random chr1 mode 0 (simulated using TE table from mode 2)
+gfai4 <- file.path(WRK, 'pub/output/TEgenomeSimulator_tair10_ch1_m0_result/tair10_ch1_m0_genome_sequence_out_final.fasta.fai')
+gff4 <- file.path(WRK, 'pub/output/TEgenomeSimulator_tair10_ch1_m0_result/tair10_ch1_m0_repeat_annotation_out_final.gff')
+genomefai4 <- read.table(gfai4, header = F, sep = '\t')
+tegff4 <- read.table(gff4, header = F, sep = '\t', comment.char = "")
+# Garlic tair10 chr1 (non-repeat seq should be 27195677 bp)
+gfai5 <- file.path(WRK, 'pub/output/Garlic/tair10_garlic_sim_chr1.fa.fasta.fai')
+gff5 <- file.path(WRK, 'pub/output/Garlic/tair10_garlic_sim_chr1.fa.inserts.te.gff')
+simrep5 <- file.path(WRK, 'pub/output/Garlic/tair10_garlic_sim_chr1.fa.inserts.simple.gff')
+genomefai5 <- read.table(gfai5, header = F, sep = '\t')
+tegff5 <- read.table(gff5, header = F, sep = '\t', comment.char = "#", blank.lines.skip = TRUE)
+# TEGS random chr1 mode 0 full (simulated without TE table from mode 2)
+gfai6 <- file.path(WRK, 'pub/output/TEgenomeSimulator_tair10_ch1_m0_full_result/tair10_ch1_m0_full_genome_sequence_out_final.fasta.fai')
+gff6 <- file.path(WRK, 'pub/output/TEgenomeSimulator_tair10_ch1_m0_full_result/tair10_ch1_m0_full_repeat_annotation_out_final.gff')
+genomefai6 <- read.table(gfai6, header = F, sep = '\t')
+tegff6 <- read.table(gff6, header = F, sep = '\t', comment.char = "")
+```
+
+### 2.01 The proportion of the TE/nonTE sequence
+```{r, get_masked_size_2, echo=FALSE}
+# Original tair10 chr1
+genomesize0 <- genomefai0$V2
+nonte0 <- nontefai0 |> filter(V1 == "NC_003070.9") |> pull(V2)
+tesize0 <- as.numeric(genomesize0) - as.numeric(nonte0)
+te_perc0 <- tesize0 * 100 / (genomesize0)
+# TEgenomeSimulator tair10  mode 2
+genomesize3 <- sum(genomefai3$V2)
+tesize3 <- tegff3 |> mutate(V10 = V5-V4 + 1) |> pull(V10) |> sum()
+nonte3 <- genomesize3 - tesize3
+te_perc3 <- tesize3 * 100 / (genomesize3)
+# TEgenomeSimulator tair10  mode 0
+genomesize4 <- sum(genomefai4$V2)
+tesize4 <- tegff4 |> mutate(V10 = V5-V4 + 1) |> pull(V10) |> sum()
+nonte4 <- genomesize4 - tesize4
+te_perc4 <- tesize4 * 100 / (genomesize4)
+# Garlic tair10 chr1
+genomesize5 <- sum(genomefai5$V2)
+tesize5 <- tegff5 |> mutate(V10 = V5-V4 + 1) |> pull(V10) |> sum()
+nonte5 <- genomesize5 - tesize5
+te_perc5 <- tesize5 * 100 / (genomesize5)
+# TEgenomeSimulator tair10  mode 0 full
+genomesize6 <- sum(genomefai6$V2)
+tesize6 <- tegff6 |> mutate(V10 = V5-V4 + 1) |> pull(V10) |> sum()
+nonte6 <- genomesize6 - tesize6
+te_perc6 <- tesize6 * 100 / (genomesize6)
+# Combine stat
+df_stat <- data.frame(bases = c(tesize0, nonte0, tesize3, nonte3, tesize4, nonte4, tesize6, nonte6, tesize5, nonte5), 
+                      perc = c(te_perc0, (100-te_perc0), te_perc3, (100-te_perc3), te_perc4, (100-te_perc4), te_perc6, (100-te_perc6), te_perc5, (100-te_perc5)),
+                      feature = c(rep(c("TE", "nonTE"), 5)),
+                      simulator=c(rep("Ori", 2), rep("m2", 2), rep("m2+m0", 2), rep("m0_full", 2),rep("Garlic", 2))
+                      )
+df_stat$simulator <- factor(df_stat$simulator, levels = c("Ori", "Garlic", "m2", "m2+m0", "m0_full"))
+df_stat <- df_stat |> group_by(simulator) |> mutate(cum_sum = cumsum(bases)) |> mutate(midpoint = (cum_sum- bases/2)) |> ungroup()
+```
+
+```{r, plot_stat_2, echo=FALSE, fig.width = 4, fig.asp = 0.75}
+plotwidth <- 4
+plotheight <- 3
+plot <- ggplot(df_stat |> filter(simulator != "m0_full"), aes(x = simulator, y = bases, fill = feature)) +
+  geom_bar(stat = "identity", color = "white") +
+  geom_text(data = subset(df_stat |> filter(simulator != "m0_full"), perc > 3), aes(label = sprintf("%.1f%%", perc)), 
+            vjust = 0.5, color = "white", fontface = "bold",size = rel(4), position = position_stack(vjust = 0.5)) +
+  scale_fill_manual(values = c("TE" = "black", "nonTE" = "grey50")) +
+  scale_y_continuous(labels = label_number(scale = 1e-6)) +
+  labs(x = "Simulator", y = "Million bases", fill = "Feature") +
+  ggtitle("TE-occupied bases \nOri vs TEGS vs Garlic") +
+  theme(title = element_text(size = 8),
+            axis.text.y = element_text(size = rel(1.3)),
+            axis.text.x = element_text(size = rel(1.2)),
+            axis.title.x = element_blank(),
+            axis.title.y = element_text(size = rel(1.4)),
+            legend.title = element_blank(),
+            legend.text = element_text(size = rel(1)),
+            legend.key.size = unit(0.5, "cm"),
+            legend.background = element_blank(),
+            panel.background = element_rect(fill = "white", color = "black"))
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot
+```
+
+```{r, save_fig2.01.01, echo=FALSE}
+png(filename = paste0(OUT, "nonTEbases_ORIvTEGSvGarlic.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+File saved as: genome_size_piegraph_`r genomename`.png 
+
+### 2.02 TE composition
+```{r, data.sum_part2, include=FALSE}
+source(file.path(WRK, "pub/script/functions.R"))
+breakdown0 <- te_breakdown_sim_genome(tegff0)
+data.sum0 <- te_by_superfamily_sim_genome(tegff0)
+breakdown3 <- te_breakdown_sim_genome(tegff3)
+data.sum3 <- te_by_superfamily_sim_genome(tegff3)
+breakdown4 <- te_breakdown_sim_genome(tegff4)
+data.sum4 <- te_by_superfamily_sim_genome(tegff4)
+breakdown5 <- te_breakdown_sim_genome(tegff5)
+data.sum5 <- te_by_superfamily_sim_genome(tegff5)
+```
+
+```{r, fig2.02.01, echo=FALSE, fig.width = 5.8, fig.asp = 1, out.width="60%"}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 5.8
+plotheight <- 5.8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+genomename0='Original_tair10_ch1'
+plot <- plot_te_loci_piechart(data.sum0, genomename0)
+plot
+```
+```{r, save_fig2.02.01, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_piegraph_", genomename0, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, fig2.02.02, echo=FALSE, fig.width = 5.8, fig.asp = 1, out.width="60%"}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 5.8
+plotheight <- 5.8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+genomename3='TEGSm2_tair10_ch1'
+plot <- plot_te_loci_piechart(data.sum3, genomename3)
+plot
+```
+```{r, save_fig2.02.02, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_piegraph_", genomename3, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, fig2.02.03, echo=FALSE, fig.width = 5.8, fig.asp = 1, out.width="60%"}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 5.8
+plotheight <- 5.8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+genomename4='TEGSm0_tair10_ch1'
+plot <- plot_te_loci_piechart(data.sum4, genomename4)
+plot
+```
+```{r, save_fig2.02.03, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_piegraph_", genomename4, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, fig2.02.04, echo=FALSE, fig.width = 5.8, fig.asp = 1, out.width="60%"}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 5.8
+plotheight <- 5.8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+genomename5='Garlic_tair10_ch1'
+plot <- plot_te_loci_piechart(data.sum5, genomename5)
+plot
+```
+```{r, save_fig2.02.04, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_piegraph_", genomename5, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+### 2.03 Total simulated TE bases categorised by TE superfamily
+```{r, fig2.03.01, echo=FALSE, fig.width = 5.8, fig.asp = 1, out.width="60%"}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 5.8
+plotheight <- 5.8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot <- plot_te_bp_piechart(data.sum0, genomename0)
+plot
+```
+
+```{r, save_fig2.03.01, echo=FALSE}
+png(filename = paste0(OUT, "te_bp_piegraph_", genomename0, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, fig2.03.02, echo=FALSE, fig.width = 5.8, fig.asp = 1, out.width="60%"}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 5.8
+plotheight <- 5.8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot <- plot_te_bp_piechart(data.sum3, genomename3)
+plot
+```
+
+```{r, save_fig2.03.02, echo=FALSE}
+png(filename = paste0(OUT, "te_bp_piegraph_", genomename3, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, fig2.03.03, echo=FALSE, fig.width = 5.8, fig.asp = 1, out.width="60%"}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 5.8
+plotheight <- 5.8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot <- plot_te_bp_piechart(data.sum4, genomename4)
+plot
+```
+
+```{r, save_fig2.03.03, echo=FALSE}
+png(filename = paste0(OUT, "te_bp_piegraph_", genomename4, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, fig2.03.04, echo=FALSE, fig.width = 5.8, fig.asp = 1, out.width="60%"}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 5.8
+plotheight <- 5.8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot <- plot_te_bp_piechart(data.sum5, genomename5)
+plot
+```
+
+```{r, save_fig2.03.04, echo=FALSE}
+png(filename = paste0(OUT, "te_bp_piegraph_", genomename5, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+### 2.04 The distribution of TE loci divergence 
+```{r, fig2.04.01, echo=FALSE, fig.width = 6, fig.asp = .67}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 6
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax=1200
+ybreak=500
+plot <- plot_sim_divergence_by_loci(breakdown0 |> filter(div >= 0), ymax, ybreak, genomename0)
+plot
+```
+```{r, save_fig2.04.01, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_divergence_", genomename0, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, fig2.04.02, echo=FALSE, fig.width = 6, fig.asp = .67}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 6
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax=1200
+ybreak=500
+plot <- plot_sim_divergence_by_loci(breakdown3 |> filter(div >= 0), ymax, ybreak, genomename3)
+plot
+```
+```{r, save_fig2.04.02, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_divergence_", genomename3, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, fig2.04.03, echo=FALSE, fig.width = 6, fig.asp = .67}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 6
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax=1200
+ybreak=500
+plot <- plot_sim_divergence_by_loci(breakdown4 |> filter(div >= 0), ymax, ybreak, genomename4)
+plot
+```
+```{r, save_fig2.04.03, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_divergence_", genomename4, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, fig2.04.04, echo=FALSE, fig.width = 6, fig.asp = .67}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 6
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax=1200
+ybreak=500
+plot <- plot_sim_divergence_by_loci(breakdown5 |> filter(div >= 0), ymax, ybreak, genomename5)
+plot
+```
+```{r, save_fig2.04.04, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_divergence_", genomename5, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+### 2.05 The distribution of TE loci integrity
+
+```{r, fig2.05.01, echo=FALSE, echo=FALSE, fig.width = 8, fig.asp = .5}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 8
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax=1500
+ybreak=500
+plot <- plot_sim_integrity_by_loci(breakdown0 |> filter(itg >= 0), ymax, ybreak, genomename0)
+plot
+```
+```{r, save_fig2.05.01, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_integrity_", genomename0, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+
+```{r, fig2.05.02, echo=FALSE, echo=FALSE, fig.width = 8, fig.asp = .5}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 8
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax=1500
+ybreak=500
+plot <- plot_sim_integrity_by_loci(breakdown3 |> filter(itg >= 0), ymax, ybreak, genomename3)
+plot
+```
+```{r, save_fig2.05.02, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_integrity_", genomename3, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+
+```{r, fig2.05.03, echo=FALSE, echo=FALSE, fig.width = 8, fig.asp = .5}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 8
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax=1500
+ybreak=500
+plot <- plot_sim_integrity_by_loci(breakdown4 |> filter(itg >= 0), ymax, ybreak, genomename4)
+plot
+```
+```{r, save_fig2.05.03, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_integrity_", genomename4, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, fig2.05.04.01, echo=FALSE, echo=FALSE, fig.width = 8, fig.asp = .5}
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 8
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax=1500
+ybreak=500
+plot <- plot_sim_integrity_by_loci(breakdown5 |> filter(itg >= 0), ymax, ybreak, genomename5)
+plot
+```
+```{r, save_fig2.05.04.01, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_integrity_", genomename5, "_chopped.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, fig2.05.04.02, echo=FALSE, echo=FALSE, fig.width = 8, fig.asp = .5}
+# Find the ymax 
+source(file.path(WRK, "pub/script/functions.R"))
+plotwidth <- 8
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+h <- hist(as.numeric(breakdown5$itg), breaks = seq(0, 1, by = 0.02), plot = FALSE)
+ymax=max(h$counts)
+ybreak=2500
+plot <- plot_sim_integrity_by_loci(breakdown5 |> filter(itg >= 0), ymax, ybreak, genomename5)
+plot
+```
+```{r, save_fig2.05.04.02, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_integrity_", genomename5, "_fullview.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+### 2.06 k-mer spectrum
+```{r, load_files_kmerspectrum, echo=FALSE}
+# Read CSV with read.table
+kmer0 <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/original/kmer/kmer_counts_k6.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+kmer1 <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m2/kmer/kmer_counts_k6.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+kmer2 <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m0/kmer/kmer_counts_k6.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+kmer3 <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m0_full/kmer/kmer_counts_k6.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+kmer4 <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/Garlic/kmer/kmer_counts_k6.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+# Reshape to long format
+kmer0_long <- kmer0 |> pivot_longer(cols = c(genome, nonTE, TEonly), names_to = "Category", values_to = "Count") |> mutate(simulator = "Ori")
+kmer1_long <- kmer1 |> pivot_longer(cols = c(genome, nonTE, TEonly), names_to = "Category", values_to = "Count") |> mutate(simulator = "m2")
+kmer2_long <- kmer2 |> pivot_longer(cols = c(genome, nonTE, TEonly), names_to = "Category", values_to = "Count") |> mutate(simulator = "m2+m0")
+kmer3_long <- kmer3 |> pivot_longer(cols = c(genome, nonTE, TEonly), names_to = "Category", values_to = "Count") |> mutate(simulator = "m0full")
+kmer4_long <- kmer4 |> pivot_longer(cols = c(genome, nonTE, TEonly), names_to = "Category", values_to = "Count") |> mutate(simulator = "Garlic")
+# Combine
+kmerdf <- rbind(kmer0_long, kmer1_long, kmer2_long, kmer3_long, kmer4_long)
+kmerdf$simulator <- factor(kmerdf$simulator, levels = c("Ori", "Garlic", "m2", "m2+m0", "m0full"))
+```
+```{r, fig2.06.01, echo=FALSE, fig.width = 6, fig.asp = 0.8, out.width="60%"}
+# Plot histogram (distribution of counts per category)
+plotwidth <- 6
+plotheight <- 4.8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+
+mycolor <- c('#CC9999', '#CC6666', '#993344', '#996699', '#996633',
+               '#666699', '#336699', '#0099AA', '#99CCCC', '#006655', 
+               '#669966', '#669922', '#99CC99', '#999966', '#CCCC99',
+               '#CCCC77', '#CCCC11', '#337799', '#336666', '#004499', 
+               '#333366', '#CCCCCC')
+
+plot <- ggplot(kmerdf |> filter(simulator != "m0full"), aes(x = Count, fill = simulator)) +
+  geom_histogram(position = "identity", bins = 100, alpha = 0.8) +
+  scale_fill_manual(values=c('#99CCCC', '#FFCC66','#CC6666', '#99CC99')) +
+  facet_grid(vars(simulator), vars(Category)) +
+  scale_x_continuous(breaks = seq(0, 50000, by = 10000), labels = label_number(scale = 1e-3)) +
+  coord_cartesian(xlim = c(0, 50000)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  labs(title = "K-mer spectrum",
+       x = "K-mer counts / 1000",
+       y = "Frequency") +
+  theme(title = element_text(size = 8),
+            axis.text.y = element_text(size = rel(1.3)),
+            axis.text.x = element_text(size = rel(1.3)),
+            axis.title.x = element_text(size = rel(1.4)),
+            axis.title.y = element_text(size = rel(1.4)),
+            legend.title = element_blank(),
+            legend.text = element_text(size = rel(1)),
+            legend.key.size = unit(0.5, "cm"),
+            legend.background = element_blank(),
+            panel.background = element_rect(fill = "white", color = "black"))
+plot
+```
+```{r, save_fig2.06.01, echo=FALSE}
+png(filename = paste0(OUT, "kmer_spectrum.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+### 2.07 entropy
+```{r, load_files_entropy, echo=FALSE}
+# Read CSV with read.table
+entr0g <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/original/entropy/sliding_entropy_genome.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+entr1g <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m2/entropy/sliding_entropy_genome.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+entr2g <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m0/entropy/sliding_entropy_genome.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+entr3g <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m0_full/entropy/sliding_entropy_genome.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+entr4g <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/Garlic/entropy/sliding_entropy_genome.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+entr0t <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/original/entropy/sliding_entropy_teonly.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+entr1t <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m2/entropy/sliding_entropy_teonly.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+entr2t <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m0/entropy/sliding_entropy_teonly.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+entr3t <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m0_full/entropy/sliding_entropy_teonly.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+entr4t <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/Garlic/entropy/sliding_entropy_teonly.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+entr0nt <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/original/entropy/sliding_entropy_nonte.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+entr1nt <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m2/entropy/sliding_entropy_nonte.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+entr2nt <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m0/entropy/sliding_entropy_nonte.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+entr3nt <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m0_full/entropy/sliding_entropy_nonte.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+entr4nt <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/Garlic/entropy/sliding_entropy_nonte.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
+# Reshape to long format
+entr0g <- entr0g |> mutate(Category = "genome", simulator = "Ori")
+entr1g <- entr1g |> mutate(Category = "genome", simulator = "m2")
+entr2g <- entr2g |> mutate(Category = "genome", simulator = "m2+m0")
+entr3g <- entr3g |> mutate(Category = "genome", simulator = "m0full")
+entr4g <- entr4g |> mutate(Category = "genome", simulator = "Garlic")
+entr0t <- entr0t |> mutate(Category = "TEonly", simulator = "Ori")
+entr1t <- entr1t |> mutate(Category = "TEonly", simulator = "m2")
+entr2t <- entr2t |> mutate(Category = "TEonly", simulator = "m2+m0")
+entr3t <- entr3t |> mutate(Category = "TEonly", simulator = "m0full")
+entr4t <- entr4t |> mutate(Category = "TEonly", simulator = "Garlic")
+entr0nt <- entr0nt |> mutate(Category = "nonTE", simulator = "Ori")
+entr1nt <- entr1nt |> mutate(Category = "nonTE", simulator = "m2")
+entr2nt <- entr2nt |> mutate(Category = "nonTE", simulator = "m2+m0")
+entr3nt <- entr3nt |> mutate(Category = "nonTE", simulator = "m0full")
+entr4nt <- entr4nt |> mutate(Category = "nonTE", simulator = "Garlic")
+# Combine
+entrdf <- rbind(entr0g, entr1g, entr2g, entr3g, entr4g)
+entrdf <- rbind(entrdf, entr0t, entr1t, entr2t, entr3t, entr4t)
+entrdf <- rbind(entrdf, entr0nt, entr1nt, entr2nt, entr3nt, entr4nt)
+entrdf$simulator <- factor(entrdf$simulator, levels = c("Ori", "Garlic", "m2", "m2+m0", "m0full"))
+```
+
+```{r, test_entropy_range, echo=FALSE}
+entrdf_fil <- entrdf |> filter(simulator != "m0full") |> filter(entropy > 0)
+
+# Kruskal-Wallis test
+kruskal_res <- kruskal.test(entropy ~ simulator, data = entrdf_fil)
+kruskal_res
+
+# Pairwise post-hoc comparisons
+pairwise_res <- pairwise.wilcox.test(entrdf_fil$entropy, entrdf_fil$simulator, p.adjust.method = "BH")
+pairwise_res
+
+# Pairwise post-hoc comparisons by category
+entrdf_fil_genome <- entrdf_fil |> filter(Category == "genome")
+pairwise_res_genome <- pairwise.wilcox.test(entrdf_fil_genome$entropy, entrdf_fil_genome$simulator, p.adjust.method = "BH")
+pairwise_res_genome
+entrdf_fil_nonTE <- entrdf_fil |> filter(Category == "nonTE")
+pairwise_res_nonTE <- pairwise.wilcox.test(entrdf_fil_nonTE$entropy, entrdf_fil_nonTE$simulator, p.adjust.method = "BH")
+pairwise_res_nonTE
+entrdf_fil_TEonly <- entrdf_fil |> filter(Category == "TEonly")
+pairwise_res_TEonly <- pairwise.wilcox.test(entrdf_fil_TEonly$entropy, entrdf_fil_TEonly$simulator, p.adjust.method = "BH")
+pairwise_res_TEonly
+```
+```{r, fig2.07.01, echo=FALSE, fig.width = 6, fig.asp = 0.8, out.width="60%"}
+plotwidth <- 6
+plotheight <- 4.8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+# Line graph
+plot <- ggplot(entrdf |> filter(simulator != "m0full"),
+       aes(x = pos/1e6, y = entropy, color = simulator)) +   # <- fill inside aes
+  geom_line(alpha = 0.8) +
+  scale_color_manual(values = c('#99CCCC', '#FFCC66', '#CC6666', '#99CC99')) +
+  facet_grid(vars(simulator), vars(Category)) +
+  labs(title = "Shannon entropy",
+       x = "Position (Mb)",
+       y = "Entropy (bits)") +
+  theme(title = element_text(size = 8),
+            axis.text.y = element_text(size = rel(1.3)),
+            axis.text.x = element_text(size = rel(1.3)),
+            axis.title.x = element_text(size = rel(1.4)),
+            axis.title.y = element_text(size = rel(1.4)),
+            legend.title = element_blank(),
+            legend.text = element_text(size = rel(1)),
+            legend.key.size = unit(0.5, "cm"),
+            legend.background = element_blank(),
+            panel.background = element_rect(fill = "white", color = "black"))
+plot
+```
+```{r, save_fig2.07.01, echo=FALSE}
+png(filename = paste0(OUT, "entropy_spectrum.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, fig2.07.02, echo=FALSE, fig.width = 6, fig.asp = 0.8, out.width="60%"}
+plotwidth <- 6
+plotheight <- 4.8
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+
+# Boxplot of entropy per Category and Simulator
+library(ggpubr)
+plot <- ggplot(entrdf_fil, aes(x = simulator, y = entropy, fill = simulator)) +
+  geom_boxplot(alpha = 0.8, outlier.size = 0.5) +
+  scale_fill_manual(values = c('#99CCCC', '#FFCC66', '#CC6666', '#99CC99')) +
+  #stat_compare_means(method = "kruskal.test", label.y = max(entrdf_fil$entropy) + 0.1) +  # global test per facet
+  stat_compare_means(method = "wilcox.test", 
+                     label = "p.signif", 
+                     ref.group = "Ori") +             # pairwise vs Ori, per facet
+  facet_wrap(~Category, scales = "free_x") +          # run stats separately per Category
+  labs(
+    title = "Distribution of Shannon entropy",
+    x = "Simulator",
+    y = "Entropy (bits)"
+  ) +
+  theme(title = element_text(size = 8),
+            axis.text.y = element_text(size = rel(1.3)),
+            axis.text.x = element_text(size = rel(1.3), angle = 45, hjust = 1),
+            axis.title.x = element_text(size = rel(1.4)),
+            axis.title.y = element_text(size = rel(1.4)),
+            legend.title = element_blank(),
+            legend.text = element_text(size = rel(1)),
+            legend.key.size = unit(0.5, "cm"),
+            legend.background = element_blank(),
+            panel.background = element_rect(fill = "white", color = "black"))
+
+
+plot
+```
+```{r, save_fig2.07.02, echo=FALSE}
+png(filename = paste0(OUT, "entropy_stat_test.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+### 2.08 annotation recovery
+Note: detection rate (reciprocal overlap > 0.8)
+```{r, load_files_recovery, echo=FALSE}
+rcv1 <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m2/bedtools_cut08/overlap_eval_stat.txt'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+rcv2 <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m0/bedtools_cut08/overlap_eval_stat.txt'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+rcv4 <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/Garlic/bedtools_cut08/overlap_eval_stat.txt'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+bin1 <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m2/bedtools_cut08/recovery_by_bin2D.tsv'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+bin2 <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/tair10_ch1_m0/bedtools_cut08/recovery_by_bin2D.tsv'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+bin4 <- read.table(file.path(WRK, 'pub/output/TE_sim_eval/Garlic/bedtools_cut08/recovery_by_bin2D.tsv'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+# Reshape to long format
+rcv1 <- rcv1 |> mutate(perc_recovery = round((1 - Ratio_non_overlap)*100, 1), simulator = "m2")
+rcv2 <- rcv2 |> mutate(perc_recovery = round((1 - Ratio_non_overlap)*100, 1), simulator = "m2+m0")
+rcv4 <- rcv4 |> mutate(perc_recovery = round((1 - Ratio_non_overlap)*100, 1), simulator = "Garlic")
+bin1 <- bin1 |> mutate(simulator = "m2")
+bin2 <- bin2 |> mutate(simulator = "m2+m0")
+bin4 <- bin4 |> mutate(simulator = "Garlic")
+# Combine
+rcvdf <- rbind(rcv1, rcv2, rcv4)
+rcvdf$simulator <- factor(rcvdf$simulator, levels = c("Garlic", "m2", "m2+m0"))
+bindf <- rbind(bin1, bin2, bin4)
+bindf$simulator <- factor(bindf$simulator, levels = c("Garlic", "m2", "m2+m0"))
+```
+
+```{r, fig2.08.01, echo=FALSE, fig.width = 2, fig.asp = 1.2, out.width="60%"}
+plotwidth <- 2
+plotheight <- 2.4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot <- ggplot(rcvdf, aes(x = simulator, y = perc_recovery, fill = simulator)) +
+  geom_col(width = 0.6, alpha = 0.8) +
+  scale_fill_manual(values = c('#FFCC66', '#CC6666', '#99CC99')) +
+  geom_text(aes(label = perc_recovery), vjust = -0.5, size = 4) +
+  labs(
+    title = "TE Recovery Rate by\nRepeatMasker",
+    #x = "Simulator",
+    y = "Recovery (%)"
+  ) +
+  theme(legend.position = "none") +
+  ylim(0, 110) +
+ theme(title = element_text(size = 8),
+            axis.text.y = element_text(size = rel(1.3)),
+            axis.text.x = element_text(size = rel(1.3)),#, angle = 45, hjust = 1),
+            axis.title.x = element_blank(),
+            #axis.title.x = element_text(size = rel(1.4)),
+            axis.title.y = element_text(size = rel(1.4)),
+            legend.title = element_blank(),
+            legend.text = element_text(size = rel(1)),
+            legend.key.size = unit(0.5, "cm"),
+            legend.background = element_blank(),
+            panel.background = element_rect(fill = "white", color = "black"))
+plot
+```
+```{r, save_fig2.08.01, echo=FALSE}
+png(filename = paste0(OUT, "repeatmasker_recovery_rate.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+#### Didn't plot the following. Better to present in the original output table format.
+```{r, fig2.08.02, echo=FALSE, fig.width = 6, fig.asp = 0.8, out.width="60%"}
+ggplot(bindf, aes(x = integrity_interval, 
+               y = rate, 
+               color = divergence_interval, 
+               group = divergence_interval)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  facet_grid(cols = vars(simulator)) +
+  labs(
+    title = "Recovery rate across integrity × divergence bins",
+    x = "Integrity interval",
+    y = "Recovery rate",
+    color = "Divergence interval"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
