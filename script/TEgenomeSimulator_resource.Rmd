@@ -15,7 +15,7 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-setwd('../../../')
+setwd('../../')
 WRK <- getwd()
 OUT <- file.path(WRK, "TEgenomeSimulator_pub/output/sim_resource/")
 dir.create(file.path(OUT), recursive = TRUE, showWarnings = FALSE)
@@ -123,7 +123,8 @@ df_mode2 <- df %>%
   filter(`Run mode` == 2) %>%
   mutate(
     task_label = gsub(" TE composition approximation", "", Task),
-    task_label = factor(task_label, levels = task_order_mode2),
+    task_label = factor(task_label, levels = task_order_mode2,
+                        labels = c("TAIR10", "O_sativa", "Z_mays", "dm6", "D_rerio")),
     type = "mode 2"
   )
 
