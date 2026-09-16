@@ -1,0 +1,497 @@
+---
+title: "Investing the settings of identity"
+author: "Ting-Hsuan Chen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+# expecting to initially be in the cloned folder "TEgenomeSimulator_publication_code"
+WRK <- getwd()
+WRK <- '/workspace/cflthc/script/TEgenomeSimulator_publication_code' # clean up this line before git push
+OUT <- file.path(WRK, "output/tair10_sd_scenarios/")
+dir.create(file.path(OUT), recursive = TRUE, showWarnings = FALSE)
+knitr::opts_knit$set(root.dir=OUT)
+```
+
+```{r, load_TEsnoopeR, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+source(file.path(WRK, "script/functions.R"))
+```
+
+Tables and images saved in\
+`r OUT`
+
+## 1. Load files
+
+```{r, load_files, echo=FALSE}
+# item29: 5 duplicate runs per scenario (item29_tair10_sd_raw.sh)
+reps <- 1:5
+
+load_scenario_reps <- function(n){
+  lapply(reps, function(i){
+    SIM <- file.path(WRK, sprintf('output/TEgenomeSimulator_tair10_sd_scenario%s_rep%d_result', n, i))
+    prefix <- sprintf('tair10_sd_scenario%s_rep%d', n, i)
+    list(
+      genomefai = read.table(file.path(SIM, paste0(prefix, '_genome_sequence_out_final.fasta.fai')), header = FALSE, sep = '\t'),
+      tefai = read.table(file.path(SIM, paste0(prefix, '_repeat_sequence_out_final.fasta.fai')), header = FALSE, sep = '\t', comment.char = ""),
+      tegff = read.table(file.path(SIM, paste0(prefix, '_repeat_annotation_out_final.gff')), header = FALSE, sep = '\t', comment.char = "")
+    )
+  })
+}
+
+scenario1_list <- load_scenario_reps('1')
+scenario2_list <- load_scenario_reps('2')
+scenario3_list <- load_scenario_reps('3')
+scenario4_list <- load_scenario_reps('4')
+
+# rep 1 aliased to the original single-genome variable names, used unchanged by the
+# existing (single-representative-genome) histogram section below
+tegff1 <- scenario1_list[[1]]$tegff
+tegff2 <- scenario2_list[[1]]$tegff
+tegff3 <- scenario3_list[[1]]$tegff
+tegff4 <- scenario4_list[[1]]$tegff
+
+genomesize1 <- sum(scenario1_list[[1]]$genomefai$V2); tesize1 <- sum(scenario1_list[[1]]$tefai$V2); te_perc1 <- tesize1 * 100 / genomesize1
+genomesize2 <- sum(scenario2_list[[1]]$genomefai$V2); tesize2 <- sum(scenario2_list[[1]]$tefai$V2); te_perc2 <- tesize2 * 100 / genomesize2
+genomesize3 <- sum(scenario3_list[[1]]$genomefai$V2); tesize3 <- sum(scenario3_list[[1]]$tefai$V2); te_perc3 <- tesize3 * 100 / genomesize3
+genomesize4 <- sum(scenario4_list[[1]]$genomefai$V2); tesize4 <- sum(scenario4_list[[1]]$tefai$V2); te_perc4 <- tesize4 * 100 / genomesize4
+
+data.sum1 <- te_by_superfamily_sim_genome(tegff1); total_loci1 <- sum(data.sum1$count)
+data.sum2 <- te_by_superfamily_sim_genome(tegff2); total_loci2 <- sum(data.sum2$count)
+data.sum3 <- te_by_superfamily_sim_genome(tegff3); total_loci3 <- sum(data.sum3$count)
+data.sum4 <- te_by_superfamily_sim_genome(tegff4); total_loci4 <- sum(data.sum4$count)
+
+breakdown1 <- te_breakdown_sim_genome(tegff1)
+breakdown2 <- te_breakdown_sim_genome(tegff2)
+breakdown3 <- te_breakdown_sim_genome(tegff3)
+breakdown4 <- te_breakdown_sim_genome(tegff4)
+
+# all 5 replicates, tagged with rep - used for the mean +/- SD line graph further down
+breakdown1_allreps <- dplyr::bind_rows(lapply(reps, function(i){ bd <- te_breakdown_sim_genome(scenario1_list[[i]]$tegff); bd$rep <- i; bd }))
+breakdown2_allreps <- dplyr::bind_rows(lapply(reps, function(i){ bd <- te_breakdown_sim_genome(scenario2_list[[i]]$tegff); bd$rep <- i; bd }))
+breakdown3_allreps <- dplyr::bind_rows(lapply(reps, function(i){ bd <- te_breakdown_sim_genome(scenario3_list[[i]]$tegff); bd$rep <- i; bd }))
+breakdown4_allreps <- dplyr::bind_rows(lapply(reps, function(i){ bd <- te_breakdown_sim_genome(scenario4_list[[i]]$tegff); bd$rep <- i; bd }))
+```
+
+## 2 Mean ± SD across 5 replicates, coloured by scenario (replaces Fig 3E)
+
+Bin mean/SD are extracted via `ggplot_build()` from per-replicate histograms built
+purely for that purpose (not displayed) - same approach as `item29_Simulator_comparison_raw.Rmd`'s
+divergence mean/SD line graph, so the line graph's bins always match what a histogram
+of the same data would show.
+
+```{r, div_meansd_build, echo=FALSE}
+source(file.path(WRK, "script/functions.R"))
+ymax_ph <- 1e6  # placeholder for the (unused/undisplayed) histogram's y-axis; never affects the extracted bin counts
+hist_scenario1 <- plot_sim_divergence_by_loci_reps(breakdown1_allreps |> filter(div >= 0), ymax_ph, ymax_ph / 5, "scenario1")
+hist_scenario2 <- plot_sim_divergence_by_loci_reps(breakdown2_allreps |> filter(div >= 0), ymax_ph, ymax_ph / 5, "scenario2")
+hist_scenario3 <- plot_sim_divergence_by_loci_reps(breakdown3_allreps |> filter(div >= 0), ymax_ph, ymax_ph / 5, "scenario3")
+hist_scenario4 <- plot_sim_divergence_by_loci_reps(breakdown4_allreps |> filter(div >= 0), ymax_ph, ymax_ph / 5, "scenario4")
+
+bin_summary_scenario1 <- summarise_bins_from_histogram(hist_scenario1) |> mutate(test = 'scenario1: high identity + high sd')
+bin_summary_scenario2 <- summarise_bins_from_histogram(hist_scenario2) |> mutate(test = 'scenario2: low identity + high sd')
+bin_summary_scenario3 <- summarise_bins_from_histogram(hist_scenario3) |> mutate(test = 'scenario3: low identity + low sd')
+bin_summary_scenario4 <- summarise_bins_from_histogram(hist_scenario4) |> mutate(test = 'scenario4: high identity + low sd')
+
+bin_summary_all <- dplyr::bind_rows(bin_summary_scenario1, bin_summary_scenario2, bin_summary_scenario3, bin_summary_scenario4) |>
+  mutate(test = factor(test, levels = c('scenario4: high identity + low sd',
+                                         'scenario3: low identity + low sd',
+                                         'scenario2: low identity + high sd',
+                                         'scenario1: high identity + high sd')))
+
+ymax_div_meansd <- max(bin_summary_all$mean_count + bin_summary_all$sd_count, na.rm = TRUE) * 1.1
+
+# same colours already used for these 4 scenarios in the histogram above (section 2)
+scenario_colors <- c('scenario1: high identity + high sd' = '#CC6666',
+                      'scenario2: low identity + high sd'  = '#999966',
+                      'scenario3: low identity + low sd'   = '#0099AA',
+                      'scenario4: high identity + low sd'  = '#996699')
+```
+
+```{r, div_meansd_plot, echo=FALSE, fig.width = 6, fig.asp = 0.5}
+source(file.path(WRK, "script/functions.R"))
+plotwidth <- 6
+plotheight <- 3
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+p <- plot_binned_mean_sd_bygroup(bin_summary_all, group_col = "test", group_colors = scenario_colors,
+                                  xlab_text = "Divergence", ymax = ymax_div_meansd, use_count = TRUE, xlim = c(0, 1)) +
+  ggtitle("Sequence divergence distribution: \nScenarios controlled by mean identity, sd, alpha, and intact rate\n(mean ± SD, n=5 replicates)")
+p
+```
+
+```{r, save_div_meansd, echo=FALSE}
+png(filename = paste0(OUT, "sim_tair10_sd_scenarioAll_divergence_meansd.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(p)
+while (!is.null(dev.list()))  dev.off()
+```
+
+## 3. Test RepeatMasker recovery rate
+```{r, load_files_recovery, echo=FALSE}
+bin1 <- read.table(file.path(WRK, 'TEgenomeSimulator_pub/output/tair10/output/TEgenomeSimulator_tair10_sd_scenario1_result/RM_recovery_eval/recovery_by_bin2D.tsv'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+bin2 <- read.table(file.path(WRK, 'TEgenomeSimulator_pub/output/tair10/output/TEgenomeSimulator_tair10_sd_scenario2_result/RM_recovery_eval/recovery_by_bin2D.tsv'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+bin3 <- read.table(file.path(WRK, 'TEgenomeSimulator_pub/output/tair10/output/TEgenomeSimulator_tair10_sd_scenario3_result/RM_recovery_eval/recovery_by_bin2D.tsv'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+bin4 <- read.table(file.path(WRK, 'TEgenomeSimulator_pub/output/tair10/output/TEgenomeSimulator_tair10_sd_scenario4_result/RM_recovery_eval/recovery_by_bin2D.tsv'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+bin1 <- bin1 |> mutate(scenario = 'scenario1')
+bin2 <- bin2 |> mutate(scenario = 'scenario2')
+bin3 <- bin3 |> mutate(scenario = 'scenario3')
+bin4 <- bin4 |> mutate(scenario = 'scenario4')
+bindf <- rbind(bin1, bin2, bin3, bin4)
+bindf <- bindf |> rename(identity_interval = divergence_interval) |>
+  mutate(rate = ifelse(total == 0, NA, rate))
+```
+
+```{r, prep_heatmap, echo=FALSE}
+# main heatmap data
+heat_data <- bindf %>%
+  group_by(scenario, integrity_interval, identity_interval) %>%
+  summarise(rate = mean(rate), .groups="drop")
+
+# top marginal rate by integrity_interval (excluding NAs)
+marg_x <- bindf %>%
+  group_by(scenario, integrity_interval) %>%
+  summarise(rate = mean(rate, na.rm = TRUE), .groups="drop")
+
+# right marginal rate by identity_interval (excluding NAs)
+marg_y <- bindf %>%
+  group_by(scenario, identity_interval) %>%
+  summarise(rate = mean(rate, na.rm = TRUE), .groups="drop")
+```
+
+
+```{r, plot_scenario1, echo=FALSE, fig.width = 8, fig.asp = 0.5625, out.width="60%"}
+library(cowplot) # for plot assembly
+plotwidth <- 8
+plotheight <- 4.5
+scen <- "scenario1"
+
+# Heatmap
+heat_p <- ggplot(heat_data |> filter(scenario == scen), aes(x=integrity_interval, y=identity_interval, fill=rate)) +
+  geom_tile(color="grey80") +  
+  scale_fill_viridis_c(option="cividis", na.value = "white") +
+  theme_minimal(base_size = 10) +
+  theme(axis.text.y = element_text(size = rel(1.2)),
+          axis.text.x = element_text(size = rel(1.2), angle=45, hjust=1),
+          axis.title.x = element_text(size = rel(1.2)),
+          axis.title.y = element_text(size = rel(1.2)),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", color = "black"))
+  labs(x="Integrity bin", y="Identity bin", fill="Rate")
+
+# Top marginal barplot
+top_p <- ggplot(marg_x |> filter(scenario == scen), aes(x=integrity_interval, y=rate, fill=rate)) +
+  geom_col() +
+  scale_fill_viridis_c(option="cividis", guide="none") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.25)) +
+  labs(title = scen) +
+  theme_minimal(base_size = 8) +
+  theme(axis.text.y = element_text(size = rel(1.5)),
+          axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+          axis.title.y = element_text(size = rel(1.5)),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x=NULL, y="Mean rate")
+
+# Right marginal barplot (flip coordinates)
+right_p <- ggplot(marg_y |> filter(scenario == scen), aes(x=identity_interval, y=rate, fill=rate)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_viridis_c(option="cividis", guide="none") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.25)) +
+  theme_minimal(base_size = 8) +
+  theme(axis.text.y=element_blank(), axis.ticks.y=element_blank(),
+          axis.title.x = element_text(size = rel(1.5)),
+        axis.text.x = element_text(size = rel(1.5), angle=45, hjust=1),
+          #axis.title.y = element_text(size = rel(1.2)),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x=NULL, y="Mean rate")
+
+# Grab the legend from a dummy plot with the same fill scale
+legend_p <- ggplot(heat_data |> filter(scenario == scen), aes(x=integrity_interval,
+                                  y=identity_interval, fill=rate)) +
+  geom_tile() +
+  scale_fill_viridis_c(option="cividis") +
+  theme(legend.position="right")
+
+legend_g <- patchwork::wrap_elements(get_legend(legend_p))
+
+# assemble top row (top_p + empty)
+top_row <- top_p + plot_spacer() +
+  plot_layout(widths = c(2,1))  # adjust widths top row
+
+# assemble main row (heatmap + right)
+main_row <- heat_p + right_p +
+  plot_layout(widths = c(2,1))  # right_p half the width
+
+# combine vertically (top half height of heatmap)
+combined <- top_row / main_row +
+  plot_layout(heights = c(1,2))  # top half height of heatmap
+
+# put legend on top-right using | operator
+final_plot <- combined | legend_g
+
+final_plot
+```
+```{r, save_heatmap_scen1, echo=FALSE}
+png(filename = paste0(OUT, "sim_tair10_sd_scenario1_disco_rate_heatmap.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(final_plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+
+```{r, plot_scenario2, echo=FALSE, fig.width = 8, fig.asp = 0.5625, out.width="60%"}
+library(cowplot) # for plot assembly
+plotwidth <- 8
+plotheight <- 4.5
+scen <- "scenario2"
+
+# Heatmap
+heat_p <- ggplot(heat_data |> filter(scenario == scen), aes(x=integrity_interval, y=identity_interval, fill=rate)) +
+  geom_tile(color="grey80") +  
+  scale_fill_viridis_c(option="cividis", na.value = "white") +
+  theme_minimal(base_size = 10) +
+  theme(axis.text.y = element_text(size = rel(1.2)),
+          axis.text.x = element_text(size = rel(1.2), angle=45, hjust=1),
+          axis.title.x = element_text(size = rel(1.2)),
+          axis.title.y = element_text(size = rel(1.2)),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", color = "black"))
+  labs(x="Integrity bin", y="Identity bin", fill="Rate")
+
+# Top marginal barplot
+top_p <- ggplot(marg_x |> filter(scenario == scen), aes(x=integrity_interval, y=rate, fill=rate)) +
+  geom_col() +
+  scale_fill_viridis_c(option="cividis", guide="none") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.25)) +
+  labs(title = scen) +
+  theme_minimal(base_size = 8) +
+  theme(axis.text.y = element_text(size = rel(1.5)),
+          axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+          axis.title.y = element_text(size = rel(1.5)),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x=NULL, y="Mean rate")
+
+# Right marginal barplot (flip coordinates)
+right_p <- ggplot(marg_y |> filter(scenario == scen), aes(x=identity_interval, y=rate, fill=rate)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_viridis_c(option="cividis", guide="none") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.25)) +
+  theme_minimal(base_size = 8) +
+  theme(axis.text.y=element_blank(), axis.ticks.y=element_blank(),
+          axis.title.x = element_text(size = rel(1.5)),
+        axis.text.x = element_text(size = rel(1.5), angle=45, hjust=1),
+          #axis.title.y = element_text(size = rel(1.2)),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x=NULL, y="Mean rate")
+
+# Grab the legend from a dummy plot with the same fill scale
+legend_p <- ggplot(heat_data |> filter(scenario == scen), aes(x=integrity_interval,
+                                  y=identity_interval, fill=rate)) +
+  geom_tile() +
+  scale_fill_viridis_c(option="cividis") +
+  theme(legend.position="right")
+
+legend_g <- patchwork::wrap_elements(get_legend(legend_p))
+
+# assemble top row (top_p + empty)
+top_row <- top_p + plot_spacer() +
+  plot_layout(widths = c(2,1))  # adjust widths top row
+
+# assemble main row (heatmap + right)
+main_row <- heat_p + right_p +
+  plot_layout(widths = c(2,1))  # right_p half the width
+
+# combine vertically (top half height of heatmap)
+combined <- top_row / main_row +
+  plot_layout(heights = c(1,2))  # top half height of heatmap
+
+# put legend on top-right using | operator
+final_plot <- combined | legend_g
+
+final_plot
+```
+```{r, save_heatmap_scen2, echo=FALSE}
+png(filename = paste0(OUT, "sim_tair10_sd_scenario2_disco_rate_heatmap.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(final_plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, plot_scenario3, echo=FALSE, fig.width = 8, fig.asp = 0.5625, out.width="60%"}
+library(cowplot) # for plot assembly
+plotwidth <- 8
+plotheight <- 4.5
+scen <- "scenario3"
+
+# Heatmap
+heat_p <- ggplot(heat_data |> filter(scenario == scen), aes(x=integrity_interval, y=identity_interval, fill=rate)) +
+  geom_tile(color="grey80") +  
+  scale_fill_viridis_c(option="cividis", na.value = "white") +
+  theme_minimal(base_size = 10) +
+  theme(axis.text.y = element_text(size = rel(1.2)),
+          axis.text.x = element_text(size = rel(1.2), angle=45, hjust=1),
+          axis.title.x = element_text(size = rel(1.2)),
+          axis.title.y = element_text(size = rel(1.2)),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", color = "black"))
+  labs(x="Integrity bin", y="Identity bin", fill="Rate")
+
+# Top marginal barplot
+top_p <- ggplot(marg_x |> filter(scenario == scen), aes(x=integrity_interval, y=rate, fill=rate)) +
+  geom_col() +
+  scale_fill_viridis_c(option="cividis", guide="none") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.25)) +
+  labs(title = scen) +
+  theme_minimal(base_size = 8) +
+  theme(axis.text.y = element_text(size = rel(1.5)),
+          axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+          axis.title.y = element_text(size = rel(1.5)),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x=NULL, y="Mean rate")
+
+# Right marginal barplot (flip coordinates)
+right_p <- ggplot(marg_y |> filter(scenario == scen), aes(x=identity_interval, y=rate, fill=rate)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_viridis_c(option="cividis", guide="none") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.25)) +
+  theme_minimal(base_size = 8) +
+  theme(axis.text.y=element_blank(), axis.ticks.y=element_blank(),
+          axis.title.x = element_text(size = rel(1.5)),
+        axis.text.x = element_text(size = rel(1.5), angle=45, hjust=1),
+          #axis.title.y = element_text(size = rel(1.2)),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x=NULL, y="Mean rate")
+
+# Grab the legend from a dummy plot with the same fill scale
+legend_p <- ggplot(heat_data |> filter(scenario == scen), aes(x=integrity_interval,
+                                  y=identity_interval, fill=rate)) +
+  geom_tile() +
+  scale_fill_viridis_c(option="cividis") +
+  theme(legend.position="right")
+
+legend_g <- patchwork::wrap_elements(get_legend(legend_p))
+
+# assemble top row (top_p + empty)
+top_row <- top_p + plot_spacer() +
+  plot_layout(widths = c(2,1))  # adjust widths top row
+
+# assemble main row (heatmap + right)
+main_row <- heat_p + right_p +
+  plot_layout(widths = c(2,1))  # right_p half the width
+
+# combine vertically (top half height of heatmap)
+combined <- top_row / main_row +
+  plot_layout(heights = c(1,2))  # top half height of heatmap
+
+# put legend on top-right using | operator
+final_plot <- combined | legend_g
+
+final_plot
+```
+```{r, save_heatmap_scen3, echo=FALSE}
+png(filename = paste0(OUT, "sim_tair10_sd_scenario3_disco_rate_heatmap.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(final_plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, plot_scenario4, echo=FALSE, fig.width = 8, fig.asp = 0.5625, out.width="60%"}
+library(cowplot) # for plot assembly
+plotwidth <- 8
+plotheight <- 4.5
+scen <- "scenario4"
+
+# Heatmap
+heat_p <- ggplot(heat_data |> filter(scenario == scen), aes(x=integrity_interval, y=identity_interval, fill=rate)) +
+  geom_tile(color="grey80") +  
+  scale_fill_viridis_c(option="cividis", na.value = "white") +
+  theme_minimal(base_size = 10) +
+  theme(axis.text.y = element_text(size = rel(1.2)),
+          axis.text.x = element_text(size = rel(1.2), angle=45, hjust=1),
+          axis.title.x = element_text(size = rel(1.2)),
+          axis.title.y = element_text(size = rel(1.2)),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", color = "black"))
+  labs(x="Integrity bin", y="Identity bin", fill="Rate")
+
+# Top marginal barplot
+top_p <- ggplot(marg_x |> filter(scenario == scen), aes(x=integrity_interval, y=rate, fill=rate)) +
+  geom_col() +
+  scale_fill_viridis_c(option="cividis", guide="none") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.25)) +
+  labs(title = scen) +
+  theme_minimal(base_size = 8) +
+  theme(axis.text.y = element_text(size = rel(1.5)),
+          axis.text.x=element_blank(), 
+        axis.ticks.x=element_blank(),
+          axis.title.y = element_text(size = rel(1.5)),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x=NULL, y="Mean rate")
+
+# Right marginal barplot (flip coordinates)
+right_p <- ggplot(marg_y |> filter(scenario == scen), aes(x=identity_interval, y=rate, fill=rate)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_viridis_c(option="cividis", guide="none") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.25)) +
+  theme_minimal(base_size = 8) +
+  theme(axis.text.y=element_blank(), axis.ticks.y=element_blank(),
+          axis.title.x = element_text(size = rel(1.5)),
+        axis.text.x = element_text(size = rel(1.5), angle=45, hjust=1),
+          #axis.title.y = element_text(size = rel(1.2)),
+          legend.position="none",
+          panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x=NULL, y="Mean rate")
+
+# Grab the legend from a dummy plot with the same fill scale
+legend_p <- ggplot(heat_data |> filter(scenario == scen), aes(x=integrity_interval,
+                                  y=identity_interval, fill=rate)) +
+  geom_tile() +
+  scale_fill_viridis_c(option="cividis") +
+  theme(legend.position="right")
+
+legend_g <- patchwork::wrap_elements(get_legend(legend_p))
+
+# assemble top row (top_p + empty)
+top_row <- top_p + plot_spacer() +
+  plot_layout(widths = c(2,1))  # adjust widths top row
+
+# assemble main row (heatmap + right)
+main_row <- heat_p + right_p +
+  plot_layout(widths = c(2,1))  # right_p half the width
+
+# combine vertically (top half height of heatmap)
+combined <- top_row / main_row +
+  plot_layout(heights = c(1,2))  # top half height of heatmap
+
+# put legend on top-right using | operator
+final_plot <- combined | legend_g
+
+final_plot
+```
+```{r, save_heatmap_scen4, echo=FALSE}
+png(filename = paste0(OUT, "sim_tair10_sd_scenario4_disco_rate_heatmap.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(final_plot)
+while (!is.null(dev.list()))  dev.off()
+```
