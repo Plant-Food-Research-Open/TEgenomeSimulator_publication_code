@@ -1,0 +1,394 @@
+---
+title: "Analysing the correlation between TE sequence identity and integrity"
+author: "Ting-Hsuan Chen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    highlight: tango
+---
+
+## 0. Setup directory
+### 0.1 Setup genome name and directory
+```{r setup, include=FALSE}
+genomename1a <- 'tair10_original'
+genomename2a <- 'rice_original'
+genomename3a <- 'maize_original'
+genomename4a <- 'dm6_original'
+genomename5a <- 'danio_original'
+
+genomename1b <- 'tair10_simulated'
+short_gname1b <- 'tair10_run7'
+genomename2b <- 'rice_simulated'
+short_gname2b <- 'rice'
+genomename3b <- 'maize_simulated'
+short_gname3b <- 'maize_run3'
+genomename4b <- 'dm6_simulated'
+short_gname4b <- 'dm6'
+genomename5b <- 'danio_simulated'
+short_gname5b <- 'danio'
+
+WRK <- "/workspace/cflthc/script"
+setwd(WRK)
+SIM1 <- file.path(WRK, "TEgenomeSimulator_pub/output/tair10/output/TEgenomeSimulator_tair10_run7_result/")
+SIM2 <- file.path(WRK, "TEgenomeSimulator_pub/output/TEgenomeSimulator_rice_result/")
+SIM3 <- file.path(WRK, "TEgenomeSimulator_pub/output/TEgenomeSimulator_maize_run3_result/")
+SIM4 <- file.path(WRK, "TEgenomeSimulator_pub/output/TEgenomeSimulator_dm6_result/")
+SIM5 <- file.path(WRK, "TEgenomeSimulator_pub/output/TEgenomeSimulator_danio_result/")
+
+OUT <- file.path(WRK, "TEgenomeSimulator_publication_code/output/corr_identity_integrity/")
+dir.create(file.path(OUT), recursive = TRUE, showWarnings = FALSE)
+knitr::opts_knit$set(root.dir=OUT)
+```
+### 0.2 Load libraries
+```{r, load_TEsnoopeR, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+source(file.path(WRK, "TEgenomeSimulator_publication_code/script/functions.R"))
+```
+
+## 1. tair10
+### 1.1 original genome
+#### 1.1.1 load files
+```{r, load_files_ori_tair10, include=FALSE}
+rmout1 <- read.table(paste0(SIM1, 'processed_output.temp'), header = T, sep = '\t', comment.char = "")
+rmout1 <- rmout1 |> mutate(div = as.numeric(1 - identity), itg = as.numeric(length_ratio)) |>
+  dplyr::mutate(superfamily = gsub("auto", "", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("nona", "", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/Helitron", "RC\\/Helitron", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/CMC.*", "DNA\\/CACTA", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/MULE.*", "DNA\\/MULE", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/MuDR.*", "DNA\\/MULE", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/PIF-Harbinger", "DNA\\/Harbinger", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/TcMar.*", "DNA\\/Mariner", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA\\/hAT.*", "DNA\\/hAT", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("LTR\\/Gypsy", "LTR\\/Ty3", superfamily)) |>
+    dplyr::mutate(superfamily = gsub("DNA$", "DNA\\/unknown", superfamily)) |>
+    dplyr::mutate(itg = if_else(itg > 1, 1, itg))
+rmtbl1 <- paste0(SIM1, "repeatmasker/GCF_000001735.4_TAIR10.1_genomic.fna.tbl")
+```
+### 1.1.2 The distribution of TE loci divergence 
+```{r, fig_div_ori_tair10, echo=FALSE, fig.width = 6, fig.asp = .67, out.width="60%"}
+plotwidth <- 6
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax <- 1750
+ybreak <- 250
+plot_div_ori <- plot_ori_divergence_by_loci(rmout1, ymax, ybreak, genomename1a)
+plot_div_ori
+```
+
+```{r, save_fig_div_ori_tair10, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_divergence_", genomename1a, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot_div_ori)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file name: te_loci_divergence_`r genomename1a`.png
+
+### 1.1.3 The distribution of TE loci integrity
+
+```{r, fig_itg_ori_tair10, echo=FALSE, fig.width = 8, fig.asp = .5}
+plotwidth <- 8
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax <- 3000
+ybreak <- 500
+plot_itg_ori <- plot_ori_integrity_by_loci(rmout1 |> filter(itg >= 0), ymax, ybreak, genomename1a)
+plot_itg_ori
+```
+
+```{r, save_fig_itg_ori_tair10, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_integrity_", genomename1a, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot_itg_ori)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file name: te_loci_integrity_`r genomename1a`.png
+
+### 1.2 Simulated genome
+#### 1.2.1 load files
+```{r, load_files_sim_tair10, echo=FALSE}
+gff1 <- paste0(short_gname1b, '_repeat_annotation_out_final.gff')
+tegff1 <- read.table(paste0(SIM1, gff1), header = F, sep = '\t', comment.char = "")
+breakdown1 <- te_breakdown_sim_genome(tegff1)
+```
+
+### 1.2.2 The distribution of TE loci divergence  
+```{r, fig_div_sim_tair10, echo=FALSE, fig.width = 8, fig.asp = .5, out.width="60%"}
+plotwidth <- 8
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax <- 1750
+ybreak <- 250
+plot_div_sim <- plot_sim_divergence_by_loci(breakdown1 |> filter(div >= 0), ymax, ybreak, genomename1b)
+plot_div_sim
+```
+
+```{r, save_fig_div_sim_tair10, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_divergence_", genomename1b, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot_div_sim)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file name: te_loci_divergence_`r genomename1b`.png
+
+### 1.2.3 The distribution of TE loci integrity
+```{r, fig_itg_sim_tair10, echo=FALSE, fig.width = 8, fig.asp = .5}
+plotwidth <- 8
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+ymax <- 3200
+ybreak <- 500
+plot_itg_sim <- plot_sim_integrity_by_loci(breakdown1 |> filter(itg >= 0), ymax, ybreak, genomename1b)
+plot_itg_sim
+```
+
+```{r, save_fig_itg_sim_tair10, echo=FALSE}
+png(filename = paste0(OUT, "te_loci_integrity_", genomename1b, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot_itg_sim)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file name: te_loci_integrity_`r genomename1b`.png
+
+## 2. Load data for the remaining validation genomes (rice, maize, dm6, danio)
+
+Only the divergence/integrity columns are needed for the correlation analysis below, so these
+loading chunks skip the superfamily relabelling used for tair10's distribution plots.
+
+```{r, load_files_ori_rice, include=FALSE}
+rmout2 <- read.table(paste0(SIM2, 'processed_output.temp'), header = T, sep = '\t', comment.char = "") |>
+  dplyr::mutate(div = as.numeric(1 - identity), itg = as.numeric(length_ratio)) |>
+  dplyr::mutate(itg = if_else(itg > 1, 1, itg))
+gff2 <- paste0(short_gname2b, '_repeat_annotation_out_final.gff')
+tegff2 <- read.table(paste0(SIM2, gff2), header = F, sep = '\t', comment.char = "")
+breakdown2 <- te_breakdown_sim_genome(tegff2)
+```
+
+```{r, load_files_ori_maize, include=FALSE}
+rmout3 <- read.table(paste0(SIM3, 'processed_output.temp'), header = T, sep = '\t', comment.char = "") |>
+  dplyr::mutate(div = as.numeric(1 - identity), itg = as.numeric(length_ratio)) |>
+  dplyr::mutate(itg = if_else(itg > 1, 1, itg))
+gff3 <- paste0(short_gname3b, '_repeat_annotation_out_final.gff')
+tegff3 <- read.table(paste0(SIM3, gff3), header = F, sep = '\t', comment.char = "")
+breakdown3 <- te_breakdown_sim_genome(tegff3)
+```
+
+```{r, load_files_ori_dm6, include=FALSE}
+rmout4 <- read.table(paste0(SIM4, 'processed_output.temp'), header = T, sep = '\t', comment.char = "") |>
+  dplyr::mutate(div = as.numeric(1 - identity), itg = as.numeric(length_ratio)) |>
+  dplyr::mutate(itg = if_else(itg > 1, 1, itg))
+gff4 <- paste0(short_gname4b, '_repeat_annotation_out_final.gff')
+tegff4 <- read.table(paste0(SIM4, gff4), header = F, sep = '\t', comment.char = "")
+breakdown4 <- te_breakdown_sim_genome(tegff4)
+```
+
+```{r, load_files_ori_danio, include=FALSE}
+rmout5 <- read.table(paste0(SIM5, 'processed_output.temp'), header = T, sep = '\t', comment.char = "") |>
+  dplyr::mutate(div = as.numeric(1 - identity), itg = as.numeric(length_ratio)) |>
+  dplyr::mutate(itg = if_else(itg > 1, 1, itg))
+gff5 <- paste0(short_gname5b, '_repeat_annotation_out_final.gff')
+tegff5 <- read.table(paste0(SIM5, gff5), header = F, sep = '\t', comment.char = "")
+breakdown5 <- te_breakdown_sim_genome(tegff5)
+```
+
+## 3. Analysis 1: correlation between identity and integrity — real vs. mode-2 simulated
+
+For each of the five validation genomes, compute the Pearson and Spearman correlation between
+TE loci divergence (1 - identity) and integrity, separately for (a) the real/original genome
+(empirical, from RepeatMasker output) and (b) the mode-2 simulated digital replica. Loci with
+missing or out-of-range (itg < 0) integrity values are excluded, consistent with the filtering
+already used for the distribution plots above.
+
+```{r, corr_analysis1_compute, echo=FALSE}
+source(file.path(WRK, "TEgenomeSimulator_publication_code/script/functions.R"))
+genomes <- c("tair10", "rice", "maize", "dm6", "danio")
+ori_list <- list(rmout1, rmout2, rmout3, rmout4, rmout5)
+sim_list <- list(breakdown1, breakdown2, breakdown3, breakdown4, breakdown5)
+
+corr_summary <- do.call(rbind, lapply(seq_along(genomes), function(i){
+  ori_df <- ori_list[[i]] |> dplyr::filter(itg >= 0)
+  sim_df <- sim_list[[i]] |> dplyr::filter(div >= 0, itg >= 0)
+  rbind(
+    compute_corr_identity_integrity(ori_df, genomes[i], "Real (original)"),
+    compute_corr_identity_integrity(sim_df, genomes[i], "Mode 2 (simulated)")
+  )
+}))
+rownames(corr_summary) <- NULL
+
+write.csv(corr_summary, paste0(OUT, "corr_identity_integrity_summary.csv"), row.names = FALSE)
+```
+
+```{r, corr_analysis1_table, echo=FALSE}
+kable(corr_summary, digits = 3,
+      caption = "Pearson and Spearman correlation between TE loci divergence and integrity: real (original) vs. mode-2 simulated (digital replica) genomes.")
+```
+
+### 3.1 Divergence vs. integrity, per species (real vs. mode-2 simulated)
+
+One figure per genome, real vs. mode-2 simulated side by side. Because the real and simulated
+loci counts for the same species are always close in magnitude (a matched pair), both panels
+share one raw-count log10 fill scale, so the legend shows a genuine, comparable TE loci count.
+
+```{r, corr_analysis1_plot_by_genome, echo=FALSE, fig.width = 8, fig.asp = .45, results = "asis"}
+source(file.path(WRK, "TEgenomeSimulator_publication_code/script/functions.R"))
+genome_plots <- vector("list", length(genomes))
+names(genome_plots) <- genomes
+
+for (i in seq_along(genomes)) {
+  df_genome <- rbind(
+    ori_list[[i]] |> dplyr::filter(itg >= 0) |>
+      dplyr::transmute(div, itg, dataset = "Real (original)"),
+    sim_list[[i]] |> dplyr::filter(div >= 0, itg >= 0) |>
+      dplyr::transmute(div, itg, dataset = "Mode 2 (simulated)")
+  )
+  p <- plot_corr_identity_integrity_one_genome(df_genome, genomes[i])
+  genome_plots[[genomes[i]]] <- p
+
+  png(filename = paste0(OUT, "corr_identity_integrity_", genomes[i], ".png"), width = 8, height = 3.6, units = "in", res = 1200)
+  print(p)
+  while (!is.null(dev.list()))  dev.off()
+
+  cat("\n\n#### ", genomes[i], "\n\n")
+  print(p)
+  cat("\n\nSaved file name: corr_identity_integrity_", genomes[i], ".png\n\n", sep = "")
+}
+```
+
+## 4. Analysis 2: mode-1 correlation baseline ("by construction ~0")
+
+Modes 0 and 1 both draw identity and integrity from independent distributions (Gaussian
+identity, Beta integrity) at simulation time, so any identity-integrity correlation observed
+under either mode is not designed in - it is the null baseline against which the real/mode-2
+correlations in Analysis 1 should be judged. This section uses **mode 1 only**: the
+`TEgenomeSimulator_tair10_ch1_m0_*` runs originally considered for the mode-0 baseline turned
+out to have been simulated using a TE mutagenesis table (`TElib_sim_list_mode2.table`)
+generated by mode 2, not mode 0's own independent draw, so they are not a valid mode-0 baseline
+and are excluded. Since a genuine mode-0 run uses the same underlying identity/integrity
+sampling model as mode 1, mode 1's result is representative of both. Data reused from the item
+29 replicate-run work (no new simulation):
+
+- **Mode 1**: the 4 Fig. 3D identity-SD scenarios x 5 reps each = 20 tair10 (whole-genome) simulations
+  (`TEgenomeSimulator_tair10_sd_scenario{1-4}_rep{1-5}_result`), reported both pooled across all 20
+  and per scenario (5 reps pooled per scenario), to check that the null correlation holds
+  regardless of the identity-SD setting.
+
+```{r, load_mode1, include=FALSE}
+source(file.path(WRK, "TEgenomeSimulator_publication_code/script/functions.R"))
+BASELINE_DIR <- file.path(WRK, "TEgenomeSimulator_publication_code/output/")
+
+mode1_list <- list()
+for (s in 1:4) {
+  for (r in 1:5) {
+    d <- file.path(BASELINE_DIR, paste0("TEgenomeSimulator_tair10_sd_scenario", s, "_rep", r, "_result/"))
+    gff <- read.table(paste0(d, "tair10_sd_scenario", s, "_rep", r, "_repeat_annotation_out_final.gff"), header = F, sep = '\t', comment.char = "")
+    mode1_list[[paste0("s", s, "_r", r)]] <- te_breakdown_sim_genome(gff) |> dplyr::mutate(scenario = s, rep = r)
+  }
+}
+mode1_pooled <- do.call(rbind, mode1_list) |> dplyr::filter(div >= 0, itg >= 0)
+```
+
+```{r, corr_analysis2_compute, echo=FALSE}
+mode1_summary <- rbind(
+  compute_corr_identity_integrity(mode1_pooled, "tair10", "Mode 1 (pooled, 20 genomes)"),
+  do.call(rbind, lapply(1:4, function(s){
+    compute_corr_identity_integrity(
+      mode1_pooled |> dplyr::filter(scenario == s),
+      "tair10", paste0("Mode 1 (scenario ", s, ", pooled 5 reps)")
+    )
+  }))
+)
+rownames(mode1_summary) <- NULL
+
+write.csv(mode1_summary, paste0(OUT, "corr_identity_integrity_mode1_baseline.csv"), row.names = FALSE)
+kable(mode1_summary, digits = 3,
+      caption = "Pearson and Spearman correlation between TE loci divergence and integrity in mode-1 simulated data, where identity and integrity are drawn independently by construction (representative of both modes 0 and 1).")
+```
+
+Saved file name: corr_identity_integrity_mode1_baseline.csv
+
+### 4.1 Divergence vs. integrity per scenario (mode 1, 5 reps pooled)
+
+```{r, corr_analysis2_plot_by_scenario, echo=FALSE, fig.width = 6, fig.asp = .8, results = "asis"}
+source(file.path(WRK, "TEgenomeSimulator_publication_code/script/functions.R"))
+scenario_plots <- vector("list", 4)
+
+for (s in 1:4) {
+  df_scenario <- mode1_pooled |> dplyr::filter(scenario == s)
+  p <- plot_corr_identity_integrity_scenario(df_scenario, paste0("Mode 1, scenario ", s, " (5 reps pooled)"))
+  scenario_plots[[s]] <- p
+
+  png(filename = paste0(OUT, "corr_identity_integrity_mode1_scenario", s, ".png"), width = 6, height = 4.8, units = "in", res = 1200)
+  print(p)
+  while (!is.null(dev.list()))  dev.off()
+
+  cat("\n\n#### Scenario ", s, "\n\n")
+  print(p)
+  cat("\n\nSaved file name: corr_identity_integrity_mode1_scenario", s, ".png\n\n", sep = "")
+}
+```
+
+## 5. Analysis 3: non-independence caveat and family-level robustness check
+
+TE loci within a genome are not independent observations: loci belonging to the same TE family
+share evolutionary history (a single ancestral insertion event, correlated copy number and age),
+so the per-locus `cor.test()` results in Analyses 1-2 above have an effective sample size well
+below the raw `n_loci` reported - the same non-independence issue already raised for the
+Shannon-entropy/Wilcoxon analysis elsewhere in this revision (overlapping/non-independent
+windows inflating apparent significance). Non-independence inflates the *p-value's* apparent
+confidence, not the correlation coefficient itself, so the effect size and its confidence
+interval - not the p-value - should be treated as the primary evidence from Analyses 1-2.
+
+As a robustness check, each TE family is collapsed to its median divergence and median
+integrity (one data point per family, regardless of how many loci it contains), and the same
+Pearson/Spearman test is re-run on those family-level medians, real vs. mode-2, across all 5
+species. If the family-level result agrees in sign and rough magnitude with the per-locus
+result, that is evidence the per-locus correlation is not solely a within-family
+pseudoreplication artefact.
+
+```{r, corr_analysis3_compute, echo=FALSE}
+source(file.path(WRK, "TEgenomeSimulator_publication_code/script/functions.R"))
+corr_family_summary <- do.call(rbind, lapply(seq_along(genomes), function(i){
+  ori_df <- ori_list[[i]] |> dplyr::filter(itg >= 0)
+  sim_df <- sim_list[[i]] |> dplyr::filter(div >= 0, itg >= 0)
+  rbind(
+    compute_corr_identity_integrity_family(ori_df, genomes[i], "Real (original)"),
+    compute_corr_identity_integrity_family(sim_df, genomes[i], "Mode 2 (simulated)")
+  )
+}))
+rownames(corr_family_summary) <- NULL
+
+write.csv(corr_family_summary, paste0(OUT, "corr_identity_integrity_family_level.csv"), row.names = FALSE)
+kable(corr_family_summary, digits = 3,
+      caption = "Family-level robustness check: Pearson/Spearman correlation between median divergence and median integrity per TE family (one point per family, addressing within-family pseudoreplication), real vs. mode-2 simulated.")
+```
+
+Saved file name: corr_identity_integrity_family_level.csv
+
+## 6. Combined summary table
+
+```{r, corr_master_table, echo=FALSE}
+master_summary <- dplyr::bind_rows(corr_summary, mode1_summary)
+
+write.csv(master_summary, paste0(OUT, "corr_identity_integrity_master_summary.csv"), row.names = FALSE)
+kable(master_summary, digits = 3,
+      caption = "Master summary: Pearson/Spearman correlation between TE loci divergence and integrity across all 5 validation genomes (real vs. mode-2 simulated, per-locus; Analysis 1) and the mode-1 'by construction ~0' baseline (pooled and per identity-SD scenario; Analysis 2). A nominal mode-0 baseline was considered but excluded (Section 4) because the available mode-0 runs had reused a mode-2-derived TE mutagenesis table rather than mode 0's own independent draw; mode 1 is representative of both modes 0 and 1's sampling design.")
+```
+
+Saved file name: corr_identity_integrity_master_summary.csv
+
+The corresponding supplementary figures are the per-species real-vs-mode-2 plots (Section 3.1)
+and the per-scenario mode-1 plots (Section 4.1), shown as separate panels per species/scenario
+rather than one combined multi-facet figure - a combined overview was tried first but discarded
+because a single shared fill scale across genomes differing by orders of magnitude in TE loci
+count (tair10 ~2x10^4 vs. danio ~4x10^6) made all but the largest genome's panel unreadable.
+

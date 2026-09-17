@@ -76,7 +76,9 @@ te_breakdown_sim_genome <- function(gff){
     dplyr::mutate(itg = gsub(";.*", "", itg)) |>
     dplyr::mutate(idn = as.numeric(idn)) |>
     dplyr::mutate(itg = as.numeric(itg)) |>
-    dplyr::mutate(div = 1 - as.numeric(idn))
+    dplyr::mutate(div = 1 - as.numeric(idn)) |>
+    dplyr::mutate(family = gsub(".*ID=", "", V9)) |>
+    dplyr::mutate(family = gsub("\\#.*", "", family))
 
   nest <- break_gff[grepl("Nest_in", break_gff$V9),]
   notnest <- break_gff[!grepl("Nest_in", break_gff$V9),]
@@ -744,6 +746,99 @@ plot_te_superfamily_bars_meansd <- function(df_summary, value_col, sd_col, title
           strip.text = element_text(size = rel(1.1)),
           panel.background = element_rect(fill = "white", color = "black"))
   if (scale_million) plot <- plot + scale_y_continuous(labels = label_number(scale = 1e-6))
+  return(plot)
+}
+
+
+
+# Compute Pearson and Spearman correlation between TE loci divergence and integrity
+# for one genome/dataset. `df` must contain numeric columns `div` and `itg`.
+# `genome` and `dataset` are labels carried through to identify the row in the
+# combined summary table (e.g. genome = "tair10", dataset = "Real (original)").
+compute_corr_identity_integrity <- function(df, genome, dataset){
+  df <- df |> dplyr::filter(is.finite(div), is.finite(itg))
+  ct_p <- cor.test(df$div, df$itg, method = "pearson")
+  ct_s <- cor.test(df$div, df$itg, method = "spearman", exact = FALSE)
+
+  data.frame(
+    genome = genome,
+    dataset = dataset,
+    n_loci = nrow(df),
+    pearson_r = unname(ct_p$estimate),
+    pearson_ci_low = ct_p$conf.int[1],
+    pearson_ci_high = ct_p$conf.int[2],
+    pearson_p = ct_p$p.value,
+    spearman_rho = unname(ct_s$estimate),
+    spearman_p = ct_s$p.value
+  )
+}
+
+# Family-level robustness check for compute_corr_identity_integrity(): TE loci
+# within a family are not independent observations (shared ancestry), which
+# inflates the per-locus test's apparent significance - the same
+# non-independence issue raised for the Shannon-entropy/Wilcoxon analysis
+# elsewhere in this revision. This collapses each family to its median
+# divergence and median integrity first (one data point per family, however
+# many loci it has), then runs the same correlation test on those medians.
+# `df` must contain `div`, `itg` and `family` columns.
+compute_corr_identity_integrity_family <- function(df, genome, dataset){
+  if (!"family" %in% names(df)) {
+    stop("compute_corr_identity_integrity_family(): df has no 'family' column for genome '",
+         genome, "', dataset '", dataset, "'. If this is a mode-2 breakdown data frame, ",
+         "rebuild it with te_breakdown_sim_genome() after sourcing the current functions.R - ",
+         "a copy created before the 'family' column was added won't have it.")
+  }
+  df_fam <- df |>
+    dplyr::filter(is.finite(div), is.finite(itg), !is.na(family), family != "") |>
+    dplyr::group_by(family) |>
+    dplyr::summarise(div = median(div), itg = median(itg), .groups = "drop")
+  out <- compute_corr_identity_integrity(df_fam, genome, dataset)
+  names(out)[names(out) == "n_loci"] <- "n_families"
+  out
+}
+
+# Divergence vs. integrity for ONE genome, real vs. mode-2 simulated side by
+# side. The real and simulated loci counts for the same species are always
+# close in magnitude (they are a matched pair), so both panels can safely
+# share one raw-count log10 fill scale - the legend shows genuine, comparable
+# TE loci counts.
+plot_corr_identity_integrity_one_genome <- function(df_genome, genome){
+  plot <- ggplot(df_genome, aes(x = div, y = itg)) +
+    # binwidth matches the 0.02 bins used by the divergence/integrity histograms
+    # (plot_ori_divergence_by_loci() etc.) elsewhere in this script
+    geom_bin2d(binwidth = c(0.02, 0.02)) +
+    scale_fill_viridis_c(trans = "log10", name = "TE loci") +
+    geom_smooth(method = "lm", formula = y ~ x, color = "#CC3333", linewidth = 0.6, se = TRUE) +
+    facet_wrap(~dataset, nrow = 1) +
+    labs(x = "Divergence (1 - identity)", y = "Integrity", title = paste0("Genome: ", genome)) +
+    coord_cartesian(xlim = c(0, 0.6), ylim = c(0, 1)) +
+    theme(title = element_text(size = 9),
+          axis.text.y = element_text(size = rel(1)),
+          axis.text.x = element_text(size = rel(1)),
+          axis.title.x = element_text(size = rel(1.1)),
+          axis.title.y = element_text(size = rel(1.1)),
+          strip.text = element_text(size = rel(1)),
+          panel.background = element_rect(fill = "white", color = "black"))
+  return(plot)
+}
+
+# Divergence vs. integrity for ONE mode-1 identity-SD scenario (5 reps
+# pooled), a single panel - used to visualise the "by construction ~0"
+# baseline scenario by scenario. Same binwidth as the histograms and the
+# per-genome real-vs-mode-2 plot above, for visual consistency.
+plot_corr_identity_integrity_scenario <- function(df_scenario, scenario_label){
+  plot <- ggplot(df_scenario, aes(x = div, y = itg)) +
+    geom_bin2d(binwidth = c(0.02, 0.02)) +
+    scale_fill_viridis_c(trans = "log10", name = "TE loci") +
+    geom_smooth(method = "lm", formula = y ~ x, color = "#CC3333", linewidth = 0.6, se = TRUE) +
+    labs(x = "Divergence (1 - identity)", y = "Integrity", title = scenario_label) +
+    coord_cartesian(xlim = c(0, 0.6), ylim = c(0, 1)) +
+    theme(title = element_text(size = 9),
+          axis.text.y = element_text(size = rel(1)),
+          axis.text.x = element_text(size = rel(1)),
+          axis.title.x = element_text(size = rel(1.1)),
+          axis.title.y = element_text(size = rel(1.1)),
+          panel.background = element_rect(fill = "white", color = "black"))
   return(plot)
 }
 
