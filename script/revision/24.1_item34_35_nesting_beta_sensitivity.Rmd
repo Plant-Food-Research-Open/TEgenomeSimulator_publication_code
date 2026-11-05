@@ -1,0 +1,316 @@
+---
+title: "Sensitivity of RepeatMasker recovery to nesting rate and integrity distribution"
+author: "Ting-Hsuan Chen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+---
+
+This script covers two revision items that reuse the Fig. 5 recovery pipeline:
+
+- **Item 34** (R1#5, R3-minor#16): recovery of nested TE insertions vs. other TEs, and recovery as
+  a function of the nested insertion rate (0% vs. the default random 0-30% vs. 30%).
+- **Item 35** (R1#6): sensitivity of recovery to the beta-distribution parameters controlling TE
+  integrity (default alpha = 0.5, beta = 0.7 vs. mostly fragmented 0.5/2 vs. mostly intact 2/0.5).
+
+Section 1 uses the existing 20 Fig. 3D/5 genomes (4 scenarios x 5 replicates). Sections 2-3 use
+the 12 runs from `14_tair10_sensitivity_nest_beta.sh`, which reuse scenario 1 replicates 1-3's TE
+tables and seeds (paired design); the existing scenario 1 replicates 1-3 are the baseline.
+
+In the simulator's GFF, a nested insertion carries `Nest_in=<host>`, and the host TE it lands in
+is split into two pieces, each carrying `Cut_by=<insert>`. Both pieces keep the host's whole-element
+`Integrity`, although each piece is only part of the host, so host pieces are reported separately
+rather than mixed into the integrity bins of other TEs.
+
+```{r setup, include=FALSE}
+WRK <- "/workspace/cflthc/script/TEgenomeSimulator_publication_code" # clean up this line before git push
+SIMOUT <- file.path(WRK, "output")
+OUT <- file.path(WRK, "output/sensitivity_nest_beta/")
+dir.create(OUT, recursive = TRUE, showWarnings = FALSE)
+knitr::opts_knit$set(root.dir = OUT)
+
+reps_existing <- 1:5
+reps_sweep <- 1:3
+sweep_configs <- c("nest0", "nest30", "fragheavy", "intactheavy")
+```
+
+```{r, load_libraries, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+```
+
+## 1. Load per-locus recovery
+
+```{r, load_helpers, echo=FALSE}
+# One row per ground-truth locus: recovered (80% reciprocal overlap with a RepeatMasker hit),
+# identity, integrity, and category (nested insert / host piece / other)
+read_truth_recovery <- function(res_dir){
+  eval_dir <- file.path(res_dir, "RM_recovery_eval")
+  read_bed <- function(f, recovered){
+    read.delim(file.path(eval_dir, f), header = FALSE, quote = "", comment.char = "",
+               colClasses = c("character", "integer", "integer", "character")) |>
+      dplyr::transmute(attr = V4, recovered = recovered)
+  }
+  dplyr::bind_rows(read_bed("truth_with_overlap.bed", TRUE), read_bed("truth_without_overlap.bed", FALSE)) |>
+    dplyr::mutate(identity = as.numeric(sub(".*Identity=([0-9.]+).*", "\\1", attr)),
+                  integrity = as.numeric(sub(".*Integrity=([0-9.]+).*", "\\1", attr)),
+                  category = dplyr::case_when(grepl("Nest_in=", attr) ~ "nested insert",
+                                              grepl("Cut_by=", attr) ~ "host piece",
+                                              TRUE ~ "other"),
+                  # same binning as te_sim_eval_bedtools.sh: 10 bins, 1.0 goes into the last bin
+                  identity_bin = pmin(floor(identity * 10), 9),
+                  integrity_bin = pmin(floor(integrity * 10), 9)) |>
+    dplyr::select(-attr)
+}
+
+bin_label <- function(b) ifelse(b < 9, sprintf("[%.1f-%.1f)", b / 10, (b + 1) / 10), "[0.9-1.0]")
+category_levels <- c("other", "host piece", "nested insert")
+category_colors <- c("other" = "grey40", "host piece" = "#E69F00", "nested insert" = "#0072B2")
+```
+
+```{r, load_existing, echo=FALSE}
+loci_existing <- dplyr::bind_rows(lapply(1:4, function(n){
+  dplyr::bind_rows(lapply(reps_existing, function(i){
+    read_truth_recovery(file.path(SIMOUT, sprintf("TEgenomeSimulator_tair10_sd_scenario%d_rep%d_result", n, i))) |>
+      dplyr::mutate(scenario = paste0("scenario", n), rep = i)
+  }))
+})) |>
+  dplyr::mutate(category = factor(category, levels = category_levels))
+```
+
+```{r, load_sweep, echo=FALSE}
+sweep_dirs <- unlist(lapply(sweep_configs, function(cfg){
+  file.path(SIMOUT, sprintf("TEgenomeSimulator_tair10_sens_%s_rep%d_result", cfg, reps_sweep))
+}))
+sweep_done <- all(file.exists(file.path(sweep_dirs, "RM_recovery_eval", "truth_with_overlap.bed")))
+
+if (sweep_done) {
+  loci_sweep <- dplyr::bind_rows(
+    # baseline: the existing scenario 1 runs whose TE tables and seeds the sweep reuses
+    loci_existing |> dplyr::filter(scenario == "scenario1", rep %in% reps_sweep) |>
+      dplyr::select(-scenario) |> dplyr::mutate(config = "baseline"),
+    dplyr::bind_rows(lapply(sweep_configs, function(cfg){
+      dplyr::bind_rows(lapply(reps_sweep, function(i){
+        read_truth_recovery(file.path(SIMOUT, sprintf("TEgenomeSimulator_tair10_sens_%s_rep%d_result", cfg, i))) |>
+          dplyr::mutate(config = cfg, rep = i, category = factor(category, levels = category_levels))
+      }))
+    }))
+  )
+}
+```
+
+`r if (!sweep_done) "**Sweep outputs from 14_tair10_sensitivity_nest_beta.sh are not complete yet, so sections 3 and 4 are skipped.**"`
+
+## 2. Item 34: nested vs. non-nested recovery in the existing genomes (no new simulation)
+
+```{r, nested_existing_summary, echo=FALSE}
+cat_existing <- loci_existing |>
+  dplyr::group_by(scenario, rep, category) |>
+  dplyr::summarise(n = dplyr::n(), rate = mean(recovered), .groups = "drop") |>
+  dplyr::group_by(scenario, rep) |>
+  dplyr::mutate(pct_loci = 100 * n / sum(n)) |>
+  dplyr::group_by(scenario, category) |>
+  dplyr::summarise(n_mean = mean(n), pct_loci_mean = mean(pct_loci),
+                   rate_mean = mean(rate), rate_sd = sd(rate), .groups = "drop")
+
+kable(cat_existing, digits = c(0, 0, 0, 2, 3, 3),
+      caption = "Recovery rate by locus category (mean +/- SD across 5 replicates per scenario).")
+write.csv(cat_existing, paste0(OUT, "nested_category_recovery_existing.csv"), row.names = FALSE)
+```
+
+Saved file name: nested_category_recovery_existing.csv
+
+Recovery by identity bin, per category (pooled rate within each replicate, mean +/- SD across
+replicates). Identity is comparable across categories; integrity is not (host pieces carry the
+whole host's integrity), so it is not used to stratify here.
+
+```{r, nested_existing_plot, echo=FALSE, fig.width = 10, fig.asp = 0.35}
+plotwidth <- 10
+plotheight <- 3.5
+cat_identity <- loci_existing |>
+  dplyr::group_by(scenario, rep, category, identity_bin) |>
+  dplyr::summarise(rate = mean(recovered), .groups = "drop") |>
+  dplyr::group_by(scenario, category, identity_bin) |>
+  dplyr::summarise(sd = sd(rate), rate = mean(rate), .groups = "drop") |>
+  dplyr::mutate(identity_mid = identity_bin / 10 + 0.05)
+
+p_nested <- ggplot(cat_identity, aes(x = identity_mid, y = rate, colour = category)) +
+  geom_line() +
+  geom_point(size = 1.2) +
+  geom_errorbar(aes(ymin = pmax(rate - sd, 0), ymax = pmin(rate + sd, 1)), width = 0.02) +
+  facet_wrap(~scenario, nrow = 1) +
+  scale_colour_manual(values = category_colors) +
+  scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.25)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_minimal(base_size = 10) +
+  theme(panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x = "Identity (bin midpoint)", y = "Recovery rate", colour = NULL)
+p_nested
+```
+
+```{r, save_nested_existing_plot, echo=FALSE}
+png(filename = paste0(OUT, "nested_category_recovery_by_identity.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(p_nested)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file name: nested_category_recovery_by_identity.png
+
+## 3. Item 34: nesting-rate sweep (scenario 1, replicates 1-3)
+
+`nest` is the percentage of each LTR/Copia and LTR/Gypsy family's copies inserted as nested
+insertions (total copy number is unchanged). In the A. thaliana library, Gypsy elements are
+labelled LTR/Ty3, so only Copia families are nested here.
+
+```{r, nest_sweep_summary, echo=FALSE, eval=sweep_done}
+nest_levels <- c("nest0", "baseline", "nest30")
+nest_loci <- loci_sweep |> dplyr::filter(config %in% nest_levels) |>
+  dplyr::mutate(config = factor(config, levels = nest_levels))
+
+nest_per_rep <- nest_loci |>
+  dplyr::group_by(config, rep) |>
+  dplyr::summarise(n_loci = dplyr::n(),
+                   pct_nested_insert = 100 * mean(category == "nested insert"),
+                   pct_host_piece = 100 * mean(category == "host piece"),
+                   rate = mean(recovered), .groups = "drop") |>
+  dplyr::group_by(rep) |>
+  dplyr::mutate(diff_vs_baseline = rate - rate[config == "baseline"]) |>
+  dplyr::ungroup()
+
+nest_summary <- nest_per_rep |>
+  dplyr::group_by(config) |>
+  dplyr::summarise(pct_nested_insert = mean(pct_nested_insert), pct_host_piece = mean(pct_host_piece),
+                   rate_mean = mean(rate), rate_sd = sd(rate),
+                   diff_vs_baseline_mean = mean(diff_vs_baseline), diff_vs_baseline_sd = sd(diff_vs_baseline),
+                   .groups = "drop")
+kable(nest_summary, digits = 4,
+      caption = "Overall recovery by nesting setting (mean +/- SD of 3 paired replicates; difference to the baseline within each replicate).")
+
+nest_by_category <- nest_loci |>
+  dplyr::group_by(config, rep, category) |>
+  dplyr::summarise(rate = mean(recovered), .groups = "drop") |>
+  dplyr::group_by(config, category) |>
+  dplyr::summarise(rate_mean = mean(rate), rate_sd = sd(rate), .groups = "drop")
+kable(nest_by_category, digits = 4, caption = "Recovery by locus category and nesting setting (mean +/- SD of 3 replicates).")
+
+write.csv(nest_per_rep, paste0(OUT, "nest_sweep_per_replicate.csv"), row.names = FALSE)
+write.csv(nest_summary, paste0(OUT, "nest_sweep_summary.csv"), row.names = FALSE)
+write.csv(nest_by_category, paste0(OUT, "nest_sweep_by_category.csv"), row.names = FALSE)
+```
+
+Saved file names: nest_sweep_per_replicate.csv, nest_sweep_summary.csv, nest_sweep_by_category.csv
+
+## 4. Item 35: integrity (beta distribution) sweep (scenario 1, replicates 1-3)
+
+Recovery depends on identity and integrity (Fig. 5), so changing alpha/beta should change overall
+recovery mainly by changing how many copies fall into each integrity bin, especially below 0.1.
+The re-weighting check below tests this: it predicts each config's overall recovery from the
+baseline's per-bin (identity x integrity) recovery rates weighted by the config's own bin counts,
+and compares the prediction with the observed rate. Host pieces are excluded from the
+re-weighting because their integrity label is the whole host's.
+
+```{r, beta_sweep_summary, echo=FALSE, eval=sweep_done}
+beta_levels <- c("fragheavy", "baseline", "intactheavy")
+beta_labels <- c(fragheavy = "beta(0.5, 2)", baseline = "beta(0.5, 0.7) default", intactheavy = "beta(2, 0.5)")
+beta_loci <- loci_sweep |> dplyr::filter(config %in% beta_levels) |>
+  dplyr::mutate(config = factor(config, levels = beta_levels))
+
+# baseline per-bin rates, pooled over the 3 baseline replicates
+baseline_bin_rates <- beta_loci |>
+  dplyr::filter(config == "baseline", category != "host piece") |>
+  dplyr::group_by(identity_bin, integrity_bin) |>
+  dplyr::summarise(baseline_rate = mean(recovered), .groups = "drop")
+
+beta_per_rep <- beta_loci |>
+  dplyr::filter(category != "host piece") |>
+  dplyr::left_join(baseline_bin_rates, by = c("identity_bin", "integrity_bin")) |>
+  dplyr::group_by(config, rep) |>
+  dplyr::summarise(n_loci = dplyr::n(),
+                   mean_integrity = mean(integrity),
+                   pct_integrity_lt_0.1 = 100 * mean(integrity < 0.1),
+                   rate = mean(recovered),
+                   predicted_rate = mean(baseline_rate, na.rm = TRUE),
+                   pct_loci_without_baseline_bin = 100 * mean(is.na(baseline_rate)),
+                   .groups = "drop") |>
+  dplyr::group_by(rep) |>
+  dplyr::mutate(diff_vs_baseline = rate - rate[config == "baseline"]) |>
+  dplyr::ungroup()
+
+beta_summary <- beta_per_rep |>
+  dplyr::group_by(config) |>
+  dplyr::summarise(mean_integrity = mean(mean_integrity), pct_integrity_lt_0.1 = mean(pct_integrity_lt_0.1),
+                   rate_mean = mean(rate), rate_sd = sd(rate),
+                   diff_vs_baseline_mean = mean(diff_vs_baseline), diff_vs_baseline_sd = sd(diff_vs_baseline),
+                   predicted_rate_mean = mean(predicted_rate),
+                   pct_loci_without_baseline_bin = mean(pct_loci_without_baseline_bin), .groups = "drop") |>
+  dplyr::mutate(label = beta_labels[as.character(config)], .after = config)
+kable(beta_summary, digits = 4,
+      caption = paste0("Overall recovery (host pieces excluded) by beta distribution (mean +/- SD of 3 paired replicates), ",
+                        "and recovery predicted from baseline per-bin rates re-weighted by each config's bin counts."))
+
+write.csv(beta_per_rep, paste0(OUT, "beta_sweep_per_replicate.csv"), row.names = FALSE)
+write.csv(beta_summary, paste0(OUT, "beta_sweep_summary.csv"), row.names = FALSE)
+```
+
+Saved file names: beta_sweep_per_replicate.csv, beta_sweep_summary.csv
+
+Integrity distribution of each config (left) and recovery by integrity bin (right; pooled rate
+within each replicate, mean +/- SD). If the per-bin recovery curves overlap, alpha/beta change
+overall recovery only through the integrity distribution.
+
+```{r, beta_sweep_plot, echo=FALSE, eval=sweep_done, fig.width = 10, fig.asp = 0.35}
+plotwidth <- 10
+plotheight <- 3.5
+beta_colors <- c("beta(0.5, 2)" = "#D55E00", "beta(0.5, 0.7) default" = "grey40", "beta(2, 0.5)" = "#0072B2")
+beta_plot_loci <- beta_loci |> dplyr::filter(category != "host piece") |>
+  dplyr::mutate(label = factor(beta_labels[as.character(config)], levels = beta_labels[beta_levels]))
+
+p_dist <- ggplot(beta_plot_loci, aes(x = integrity, colour = label)) +
+  geom_density() +
+  scale_colour_manual(values = beta_colors) +
+  theme_minimal(base_size = 10) +
+  theme(panel.background = element_rect(fill = "white", color = "black"), legend.position = "none") +
+  labs(x = "Integrity", y = "Density", title = "Integrity distribution")
+
+beta_integrity <- beta_plot_loci |>
+  dplyr::group_by(label, rep, integrity_bin) |>
+  dplyr::summarise(rate = mean(recovered), .groups = "drop") |>
+  dplyr::group_by(label, integrity_bin) |>
+  dplyr::summarise(sd = sd(rate), rate = mean(rate), .groups = "drop") |>
+  dplyr::mutate(integrity_mid = integrity_bin / 10 + 0.05)
+
+p_rate <- ggplot(beta_integrity, aes(x = integrity_mid, y = rate, colour = label)) +
+  geom_line() +
+  geom_point(size = 1.2) +
+  geom_errorbar(aes(ymin = pmax(rate - sd, 0), ymax = pmin(rate + sd, 1)), width = 0.02) +
+  scale_colour_manual(values = beta_colors) +
+  scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.25)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_minimal(base_size = 10) +
+  theme(panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x = "Integrity (bin midpoint)", y = "Recovery rate", colour = NULL, title = "Recovery by integrity")
+
+p_beta <- patchwork::wrap_plots(p_dist, p_rate, widths = c(1, 1.4))
+p_beta
+```
+
+```{r, save_beta_sweep_plot, echo=FALSE, eval=sweep_done}
+png(filename = paste0(OUT, "beta_sweep_integrity_recovery.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(p_beta)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file name: beta_sweep_integrity_recovery.png
+
+## 5. Notes
+
+- The sweep is one-factor-at-a-time around scenario 1 with 3 paired replicates per setting; it
+  shows the direction and size of each parameter's effect, not a full response surface.
+- Recovery uses the same 80% reciprocal-overlap criterion as Fig. 5. Host pieces are evaluated
+  as separate loci, so a host split by a nested insertion is counted as recovered only for the
+  pieces RepeatMasker annotates with >= 80% reciprocal overlap.

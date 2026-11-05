@@ -1,10 +1,10 @@
 #!/bin/bash
 # Navigate to the cloned repository of "TEgenomeSimulator_publication_code"
-#WRK=/workspace/cflthc/script/TEgenomeSimulator_publication_code # remove this line before git push
+WRK=/workspace/${user}/script/TEgenomeSimulator_publication_code # clean up this line before git push
+cd $WRK
 
 # genome
 # Extract chr1 of TAIR10
-WRK=$(pwd)
 IN=$WRK/input
 OUT=$WRK/output/Garlic
 mkdir -p $OUT
@@ -15,7 +15,7 @@ grep -A1 -E 'chromosome 1' > $IN/GCF_000001735.4_TAIR10.1_genomic_chr1.fna
 cd $IN
 for i in {1..5}
 do
-fullRMout=../output/TEgenomeSimulator_tair10_ch1_m2_${i}_result/repeatmasker/GCF_000001735.4_TAIR10.1_genomic_chr1.fna.out
+fullRMout=$WRK/output/TEgenomeSimulator_tair10_ch1_m2_${i}_result/repeatmasker/GCF_000001735.4_TAIR10.1_genomic_chr1.fna.out
 cp $fullRMout ./GCF_000001735.4_TAIR10.1_genomic_chr1_rep${i}.fna.out
     # convert .out to .gff
 in_rmout=GCF_000001735.4_TAIR10.1_genomic_chr1_rep${i}.fna.out
@@ -26,7 +26,7 @@ $WRK/script/RMout2gff3v2.sh $in_rmout $in_fai $out_gff $col2label
 done
 
 # repeat
-cp ../../../../scratch/TEGE/TEgenomeSimulator/tair10/output/TEgenomeSimulator_tair10_run6_result/repeatmasker/GCF_000001735.4_TAIR10.1_genomic.fna.align ./
+cp $WRK/output/TEgenomeSimulator_tair10_result/repeatmasker/GCF_000001735.4_TAIR10.1_genomic.fna.align ./
 
 # TRF.out
 ml trf/4.07
@@ -57,8 +57,8 @@ cd $IN
 samtools faidx $IN/GCF_000001735.4_TAIR10.1_genomic_chr1.fna 
 
 # Convert the TE lib I used to embl format and replace the RepBase db
-infa=../../../../scratch/TEGE/TEgenomeSimulator/tair10/output/TEgenomeSimulator_tair10_run6_result/athrep.updated.nonredun.noCenSatelli.fasta.stitched
-cp $infa ./
+infa=$WRK/output/TEgenomeSimulator_tair10_result/athrep.updated.nonredun.noCenSatelli.fasta.stitched
+cp $infa .
 outembl=$IN/athrep.updated.nonredun.noCenSatelli.fasta.stitched.embl
 python3 - <<EOF
 from Bio import SeqIO

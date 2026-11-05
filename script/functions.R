@@ -842,3 +842,240 @@ plot_corr_identity_integrity_scenario <- function(df_scenario, scenario_label){
   return(plot)
 }
 
+# ---------------------------------------------------------------------------
+# Divergence-distribution GOF helpers (item32: skew-normal/gamma vs. the
+# Gaussian identity-draw assumption used by modes 0/1/2, R1#2 & R1#7; item36:
+# before/after comparison of the identity_fix ascertainment-bias adjustment
+# applied in TE_sim_random_insertion.py's generate_sequence(), R2#3). Both
+# items share the same five validation-species per-locus data.
+# ---------------------------------------------------------------------------
+
+# Fit Gaussian, skew-normal and gamma to a vector of per-locus divergence
+# values (fraction, 0-1 scale - the `div` column used throughout this
+# pipeline). Returns a named list of fitdistrplus::fitdist objects; any
+# distribution that fails to converge is dropped with a warning rather than
+# aborting the whole fit, since low-N families are expected to occasionally
+# fail skew-normal/gamma convergence.
+#
+# gamma requires strictly positive support, so exact-zero (perfect-identity)
+# loci are nudged to a small epsilon - applied to `x` itself, once, up front,
+# so all three distributions are fit on the identical vector. fitdistrplus::
+# gofstat() requires every compared fit to share the same underlying data
+# (it errors with "All compared fits must have been obtained with the same
+# dataset" otherwise), so fitting gamma on a separately-nudged copy while
+# norm/sn used the unmodified vector is not an option here.
+fit_divergence_distributions <- function(x){
+  x <- x[is.finite(x)]
+  x <- ifelse(x <= 0, 1e-4, x)
+  fits <- list()
+
+  fit_one <- function(label, expr){
+    result <- tryCatch(expr, error = function(e){
+      warning("fit_divergence_distributions(): '", label, "' fit failed - ", conditionMessage(e))
+      NULL
+    })
+    if (!is.null(result)) fits[[label]] <<- result
+  }
+
+  fit_one("norm", fitdistrplus::fitdist(x, "norm"))
+  # sn::dsn/psn take a 4th parameter, tau (extended skew-normal), defaulting
+  # to 0; fix.arg holds it there explicitly so we fit the standard
+  # 3-parameter skew-normal and fitdistrplus doesn't warn about the omission.
+  #
+  # alpha's starting value must NOT be exactly 0: at alpha=0 with xi/omega at
+  # the sample mean/sd, the skew-normal log-likelihood sits on a stationary
+  # point (a known Azzalini boundary pathology), and fitdistrplus's optimiser
+  # reports "converged" without ever leaving it - verified directly on
+  # synthetic skewed data, where an alpha=0 start landed on a fit with a
+  # log-likelihood identical to the Gaussian fit's, while a nonzero start
+  # (sign matching the sample's empirical skewness) escaped to the true
+  # optimum.
+  #
+  # A single nonzero start is not enough to trust, though: on the real
+  # validation-species data a single start (a) sometimes converges to a
+  # small-|alpha| fit whose AIC is *worse* than Gaussian's, which is
+  # indistinguishable by eye from "genuinely near-symmetric" without a
+  # cross-check, and (b) occasionally fails outright for one start but not
+  # another (e.g. dm6's genome-pooled fit), presumably a different starting
+  # point walking through an invalid region of the density. So several
+  # starting magnitudes (same sign) are tried and the highest-log-likelihood
+  # successful fit is kept; a fit failing at one magnitude no longer drops
+  # skew-normal for that group entirely, and agreement across starting
+  # magnitudes is evidence the kept optimum is the true one, not a local trap.
+  skew_sign <- sign(mean((x - mean(x))^3))
+  if (skew_sign == 0) skew_sign <- 1
+  sn_attempts <- lapply(skew_sign * c(0.1, 0.5, 1.5, 4), function(alpha0){
+    tryCatch(
+      suppressWarnings(fitdistrplus::fitdist(x, "sn",
+                             start = list(xi = mean(x), omega = stats::sd(x), alpha = alpha0),
+                             fix.arg = list(tau = 0))),
+      error = function(e) NULL  # this starting value failed outright; other magnitudes are still tried
+    )
+  })
+  sn_attempts <- Filter(Negate(is.null), sn_attempts)
+  if (length(sn_attempts) > 0) {
+    logliks <- vapply(sn_attempts, function(f) f$loglik, numeric(1))
+    fits[["sn"]] <- sn_attempts[[which.max(logliks)]]
+  } else {
+    # All 4 same-sign fitdistrplus starts failed outright (not just converged
+    # poorly) for this group - seen on dm6's genome-pooled data. Rather than
+    # trying yet more fitdistrplus starting values blindly, fall back to
+    # sn::selm(), which fits the same 3-parameter skew-normal via a different
+    # (centred-parameterisation-based) algorithm and is more robust to
+    # exactly this kind of direct-parameterisation numerical failure.
+    # selm()'s BIC() returns NA (its logLik has no `nobs` attribute for the
+    # generic to use), so BIC is computed manually from the same
+    # loglik/n/npar formula fitdistrplus itself uses.
+    selm_fit <- tryCatch({
+      sfit <- suppressWarnings(sn::selm(y ~ 1, family = "SN", data = data.frame(y = x)))
+      dp <- coef(sfit, "DP")
+      ll <- as.numeric(logLik(sfit))
+      npar <- 3  # xi, omega, alpha; tau fixed at 0, same convention as the fitdistrplus fits above
+      list(estimate = c(xi = unname(dp["xi"]), omega = unname(dp["omega"]), alpha = unname(dp["alpha"])),
+           loglik = ll,
+           aic = as.numeric(AIC(sfit)),
+           bic = -2 * ll + log(length(x)) * npar)
+    }, error = function(e) NULL)
+    if (!is.null(selm_fit)) {
+      fits[["sn"]] <- selm_fit
+    } else {
+      warning("fit_divergence_distributions(): 'sn' fit failed for every starting value tried, including the sn::selm() fallback")
+    }
+  }
+  fit_one("gamma", fitdistrplus::fitdist(x, "gamma"))
+
+  fits
+}
+
+# Tidy one row per fitted distribution: KS statistic, AIC, BIC, N and fitted
+# parameters, labelled by `group` (e.g. a family name, or "(pooled)") and
+# `genome`.
+#
+# The KS statistic is computed directly via stats::ks.test() with the fitted
+# parameters plugged into each distribution's CDF, rather than via
+# fitdistrplus::gofstat() - gofstat()'s chi-squared binning step throws
+# "attempt to set an attribute on NULL" on some of this dataset's families
+# (small N and/or many tied divergence values, since per-locus divergence is
+# computed from integer mismatch/length counts), a known fitdistrplus edge
+# case unrelated to what we actually need from it. AIC/BIC come straight off
+# the fitdist object instead (fitdistrplus already computes them at fit
+# time), so gofstat() is not needed for those either.
+#
+# KS p-values are intentionally omitted: the asymptotic KS null distribution
+# assumes known (not MLE-fitted) parameters, so a naive p-value here would
+# not be valid (it would need a parametric-bootstrap correction). The KS
+# statistic itself, and AIC/BIC for relative ranking between the three
+# distributions, are reported instead.
+gof_table_for_group <- function(x, group, genome){
+  x <- x[is.finite(x)]
+  n <- length(x)
+  fits <- fit_divergence_distributions(x)
+  if (length(fits) == 0) return(NULL)
+
+  # same epsilon-nudged vector the distributions were actually fit on (see
+  # fit_divergence_distributions()), so the KS statistic matches the fit
+  x_fit <- ifelse(x <= 0, 1e-4, x)
+
+  do.call(rbind, lapply(names(fits), function(dist){
+    fit <- fits[[dist]]
+    params <- fit$estimate
+    pfun <- get(paste0("p", dist))
+    ks_stat <- unname(suppressWarnings(
+      do.call(stats::ks.test, c(list(x = x_fit, y = pfun), as.list(params)))$statistic
+    ))
+    data.frame(
+      genome = genome,
+      group = group,
+      n = n,
+      distribution = dist,
+      ks_stat = ks_stat,
+      aic = unname(fit$aic),
+      bic = unname(fit$bic),
+      params = paste(sprintf("%s=%.4g", names(params), params), collapse = "; "),
+      stringsAsFactors = FALSE
+    )
+  }))
+}
+
+# Histogram of real per-locus divergence with fitted Gaussian/skew-normal/
+# gamma density curves overlaid, for one family or genome-pooled group.
+# `fits` is the named list returned by fit_divergence_distributions().
+#
+# Colour alone is not enough here: when skew-normal's fitted alpha is small
+# (e.g. tair10's pooled fit, alpha ~ 0.18 - a real result, not a fitting
+# bug: see fit_divergence_distributions()), its density curve is nearly
+# identical to Gaussian's, and geom_line() draws later distributions (sn, in
+# the fits list after norm) on top - so the Gaussian curve was being fully
+# hidden underneath an indistinguishable skew-normal one, not "missing". A
+# distinct linetype per distribution, on top of colour, keeps every curve
+# visible (the dashes show through) even when two coincide almost exactly -
+# which is itself the correct thing to show, since it visually confirms two
+# distributions are (near-)equivalent for that group.
+plot_gof_overlay <- function(x, fits, title_text, xlim = c(0, 0.6)){
+  x <- x[is.finite(x)]
+  dist_labels <- c(norm = "Gaussian", sn = "Skew-normal", gamma = "Gamma")
+  dist_colors <- c(Gaussian = "#CC3333", `Skew-normal` = "#336699", Gamma = "#339933")
+  dist_linetypes <- c(Gaussian = "dashed", `Skew-normal` = "solid", Gamma = "dotted")
+
+  dens_df <- do.call(rbind, lapply(names(fits), function(dist){
+    xs <- seq(xlim[1], xlim[2], length.out = 512)
+    params <- as.list(fits[[dist]]$estimate)
+    dfun <- get(paste0("d", dist))
+    ys <- do.call(dfun, c(list(xs), params))
+    data.frame(x = xs, y = ys, distribution = unname(dist_labels[dist]))
+  }))
+
+  ggplot(data.frame(div = x), aes(x = div)) +
+    geom_histogram(aes(y = after_stat(density)), binwidth = 0.02, fill = "grey80", color = "white") +
+    geom_line(data = dens_df, aes(x = x, y = y, color = distribution, linetype = distribution), linewidth = 1) +
+    scale_color_manual(values = dist_colors) +
+    scale_linetype_manual(values = dist_linetypes) +
+    coord_cartesian(xlim = xlim) +
+    labs(x = "Divergence (1 - identity)", y = "Density", title = title_text, color = NULL, linetype = NULL) +
+    theme(title = element_text(size = 9),
+          panel.background = element_rect(fill = "white", color = "black"))
+}
+
+# Replicates get_identity()'s Gaussian-draw-plus-resample and the
+# identity_fix ascertainment-bias adjustment from
+# TEgenomeSimulator/utils/TE_sim_random_insertion.py (get_identity(),
+# ~line 205, and the identity_fix line in generate_sequence(), ~line 335) in
+# R, on the identity (0-100) scale, so the pre/post-adjustment comparison
+# uses exactly the same procedure the simulator runs at insertion time.
+# get_identity() uses Python's int(), which truncates toward zero (not
+# round()) - trunc() matches that, including for the never-resampled
+# negative tail (there is no lower-bound check in the source, only
+# `while identity > 100`).
+simulate_identity_draws <- function(n, mean_identity, sd_identity){
+  draw_one <- function(){
+    identity <- trunc(rnorm(1, mean_identity, sd_identity))
+    while (identity > 100) identity <- trunc(rnorm(1, mean_identity, sd_identity))
+    identity
+  }
+  raw <- vapply(seq_len(n), function(i) draw_one(), numeric(1))
+  post_fix <- raw + (100 - raw) * 0.5
+  data.frame(raw = raw, post_fix = post_fix)
+}
+
+# Three-curve density overlay (real empirical / raw Gaussian draw / post-
+# identity_fix draw) on the percent-divergence scale (100 - identity), for
+# item 36's before/after sensitivity check.
+plot_identity_fix_comparison <- function(real_identity_pct, sim_draws, title_text, xlim = c(0, 60)){
+  df <- rbind(
+    data.frame(div_pct = 100 - real_identity_pct, source = "Real (empirical)"),
+    data.frame(div_pct = 100 - sim_draws$raw, source = "Simulated (raw Gaussian draw)"),
+    data.frame(div_pct = 100 - sim_draws$post_fix, source = "Simulated (post identity_fix)")
+  )
+  df$source <- factor(df$source, levels = c("Real (empirical)", "Simulated (raw Gaussian draw)", "Simulated (post identity_fix)"))
+
+  ggplot(df, aes(x = div_pct, fill = source)) +
+    geom_density(alpha = 0.4, color = NA) +
+    scale_fill_manual(values = c("Real (empirical)" = "grey40",
+                                  "Simulated (raw Gaussian draw)" = "#336699",
+                                  "Simulated (post identity_fix)" = "#CC3333")) +
+    coord_cartesian(xlim = xlim) +
+    labs(x = "Divergence (%, 100 - identity)", y = "Density", title = title_text, fill = NULL) +
+    theme(title = element_text(size = 9),
+          panel.background = element_rect(fill = "white", color = "black"))
+}
+

@@ -3,11 +3,10 @@
 
 ml conda
 #conda create --name tesimeval python=3.9 
-conda activate cflthc_tesimeval # clean up this line before git push
+conda activate ${user}_tesimeval # clean up this line before git push
 #pip install biopython numpy scipy scikit-learn pandas matplotlib
-#WRK=/workspace/cflthc/script/TEgenomeSimulator_publication_code # remove this line before git push
+WRK=/workspace/${user}/script/TEgenomeSimulator_publication_code # remove this line before git push
 cd $WRK
-WRK=$(pwd)
 IN=$WRK/input
 OUT=$WRK/output
 
@@ -33,16 +32,17 @@ JOB=tesimeval_${prefix}_${eval}
 sbatch --cpus-per-task=$THREADS --mem $RAM -t $TIME -J $JOB -o $JOB.out -e $JOB.err --wrap "python $WRK/script/te_sim_eval.py --genome $genome --te_gff $tegff --outdir $out --k 6 --win 1000 --eval ${eval}"
 done
 done
-# Submitted batch job 10722091
-# Submitted batch job 10722092
-# Submitted batch job 10722093
-# Submitted batch job 10722094
-# Submitted batch job 10722095
-# Submitted batch job 10722096
-# Submitted batch job 10722097
-# Submitted batch job 10722098
-# Submitted batch job 10722099
-# Submitted batch job 10722100
+Submitted batch job 11106689
+Submitted batch job 11106690
+Submitted batch job 11106691
+Submitted batch job 11106692
+Submitted batch job 11106693
+Submitted batch job 11106694
+Submitted batch job 11106695
+Submitted batch job 11106696
+Submitted batch job 11106697
+Submitted batch job 11106698
+
 
 #### TEGSm2+0 ####
 for i in {1..5}
@@ -62,6 +62,18 @@ JOB=tesimeval_${prefix}_${eval}
 sbatch --cpus-per-task=$THREADS --mem $RAM -t $TIME -J $JOB -o $JOB.out -e $JOB.err --wrap "python $WRK/script/te_sim_eval.py --genome $genome --te_gff $tegff --outdir $out --k 6 --win 1000 --eval ${eval}"
 done
 done
+Submitted batch job 11106705
+Submitted batch job 11106706
+Submitted batch job 11106707
+Submitted batch job 11106708
+Submitted batch job 11106709
+Submitted batch job 11106710
+Submitted batch job 11106711
+Submitted batch job 11106712
+Submitted batch job 11106713
+Submitted batch job 11106714
+
+
 # Submitted batch job 10722121
 # Submitted batch job 10722122
 # Submitted batch job 10722123
@@ -72,6 +84,7 @@ done
 # Submitted batch job 10722128
 # Submitted batch job 10722129
 # Submitted batch job 10722130
+
 #### Garlic ####
 for i in {1..5}
 do

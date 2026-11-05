@@ -1,25 +1,21 @@
 #!/bin/bash
 # GITHUB_REPO=cloned repository of "TEgenomeSimulator"
 # Navigate to the cloned repository of "TEgenomeSimulator_publication_code"
-#TEgenomeSimulator=/workspace/cflthc/script/TEgenomeSimulator/TEgenomeSimulator_dev.sif # remove this line before git push
-#WRK=/workspace/cflthc/script/TEgenomeSimulator_publication_code # remove this line before git push
+TEgenomeSimulator=/workspace/${user}/script/TEgenomeSimulator/TEgenomeSimulator_dev.sif # remove this line before git push
+WRK=/workspace/${user}/script/TEgenomeSimulator_publication_code # clean up this line before git push
 cd $WRK
-WRK=$(pwd)
 #TEgenomeSimulator=$GITHUB_REPO/TEgenomeSimulator_v1.0.0.sif
 IN=$WRK/input
 OUT=$WRK/output/denovoTEeval
-WRK=$(pwd)
 mkdir -p $OUT
 
 # copy and rename repeat fasta file
 cp $GITHUB_REPO/test/input/combined_curated_TE_lib_ATOSZM_selected.fasta.gz ./
 gzip -d combined_curated_TE_lib_ATOSZM_selected.fasta.gz
-#repeat=/workspace/cflthc/script/TEgenomeSimulator_pub/output/tair10/output/TEgenomeSimulator_tair10_run5_result/athrep.updated.nonredun.noCenSatelli.fasta.stitched # remove this line before git push
 repeat=$IN/combined_curated_TE_lib_ATOSZM_selected.fasta
 
-# prepare repeat table #
+# prepare repeat table
 cd $IN
-#cp ../output/mode0/output/TEgenomeSimulator_m0_chr10000k_result/TElib_sim_list.table ./TElib_sim_list_10000k.table
 for i in {1..5}
 do
 cp $WRK/output/mode0/TEgenomeSimulator_m0_chr10000k_rep${i}_result/TElib_sim_list.table ./TElib_sim_list_10000k_rep${i}.table
@@ -48,16 +44,6 @@ done
 
 # prepare config file
 cd $IN
-# cat ../output/mode0/output/TEgenomeSimulator_m0_chr10000k_result/TEgenomeSimulator_m0_chr10000k.yml
-# prefix: "m0_chr10000k"
-# rep_fasta: "../output/mode0/input/combined_curated_TE_lib_ATOSZM_selected.fasta"
-# rep_list: "../output/mode0/output/TEgenomeSimulator_m0_chr10000k_result/TElib_sim_list.table"
-# seed: 1
-# chrs:
-#   chr1:
-#     prefix: "chr1"
-#     seq_length: 10000000
-#     gc_content: 35
 for i in {1..5}
 do
 rm -f $OUT/random_seed_denovoTEeval.txt
@@ -74,10 +60,11 @@ gc_content: 35
 EOF
 done 
 
+TOOL_DIR=/workspace/${user}/bin # The directory where denovoTE-eval cloned into
 for i in {1..5}
 do
-cp -r /workspace/cflthc/bin/denovoTE-eval /workspace/cflthc/bin/denovoTE-eval_rep${i} # clean up this line before git push
-cd /workspace/cflthc/bin/denovoTE-eval_rep${i} # clean up this line before git push
+cp -r $TOOL_DIR/denovoTE-eval $TOOL_DIR/denovoTE-eval_rep${i}
+cd $TOOL_DIR/denovoTE-eval_rep${i} 
 cp $IN/combined_curated_TE_lib_ATOSZM_selected.fasta .
 cp $IN/TElib_sim_list_10000k_rep${i}_denovoTEeval.table .
 cp $IN/config_rep${i}.yml config.yml
@@ -85,33 +72,33 @@ done
 
 for i in {1..5}
 do
-cd /workspace/cflthc/bin/denovoTE-eval_rep${i} # clean up this line before git push
+cd $TOOL_DIR/denovoTE-eval_rep${i} 
 JOB=denovoTEeval_s1_rep${i}
 TIME="01:00:00"
 THREADS=1
 MEM=10G
 sbatch --cpus-per-task=$THREADS --mem $MEM -t $TIME -J $JOB -o $JOB.out -e $JOB.err --wrap "python ./random_sequence_TEs.py"
 done
-# Submitted batch job 10714048
-# Submitted batch job 10714049
-# Submitted batch job 10714050
-# Submitted batch job 10714051
-# Submitted batch job 10714052
+# Submitted batch job 10737184
+# Submitted batch job 10737185
+# Submitted batch job 10737186
+# Submitted batch job 10737187
+# Submitted batch job 10737188
 
 for i in {1..5}
 do
-cd /workspace/cflthc/bin/denovoTE-eval_rep${i} # clean up this line before git push
+cd $TOOL_DIR/denovoTE-eval_rep${i}
 JOB=denovoTEeval_s2_rep${i}
 TIME="01:00:00"
 THREADS=1
 MEM=10G
 sbatch --cpus-per-task=$THREADS --mem $MEM -t $TIME -J $JOB -o $JOB.out -e $JOB.err --wrap "python ./random_nest_TEs.py"
 done
-# Submitted batch job 10714054
-# Submitted batch job 10714055
-# Submitted batch job 10714056
-# Submitted batch job 10714057
-# Submitted batch job 10714058
+# Submitted batch job 10737189
+# Submitted batch job 10737190
+# Submitted batch job 10737191
+# Submitted batch job 10737192
+# Submitted batch job 10737193
 
 # move results file to proper output directory and index
 ml samtools
@@ -120,7 +107,7 @@ for i in {1..5}
 do
 mkdir -p $OUT/denovoTEeval_rep${i}
 cd $OUT/denovoTEeval_rep${i}
-denovoTEeval=/workspace/cflthc/bin/denovoTE-eval_rep${i} # clean up this line before git push
+denovoTEeval=$TOOL_DIR/denovoTE-eval_rep${i}
 mv $denovoTEeval/denovoTEeval_s* .
 mv $denovoTEeval/m0_chr10000k_* .
 mv $denovoTEeval/TElib_sim_list_10000k_rep${i}_denovoTEeval.table .
@@ -131,3 +118,35 @@ samtools faidx m0_chr10000k_rep${i}_out_repeats.fasta
 done
 
 
+##################################
+## RepeatMasker for 10MB sim genome (10000k)
+## Using TEgenomeSimulator's mode 2 with --te_scan_only
+##################################
+ml singularity/3
+WRK=$(pwd)
+#TOOL=$(cd ../../bin/TETools && pwd)
+IN=$WRK/input
+OUT=$WRK/output/denovoTEeval
+#OUT=$WRK/output/mode0
+cd $OUT
+
+THREADS=20
+MEM=15G
+TIME="1-00:00:00"
+for i in {1..5};
+do
+prefix=denovoTEeval_rep${i}
+genome=$OUT/${prefix}/m0_chr10000k_rep${i}_out_sequence_nest.fasta
+repeat=$IN/combined_curated_TE_lib_ATOSZM_selected.fasta
+JOB=te_scan_only_$prefix
+mkdir -p $OUT/${prefix}/te_scan_only
+cd $OUT/${prefix}/te_scan_only
+ln -sf $genome sim_genome.fa
+ln -sf $telib sim_used_telib.fa 
+sbatch --cpus-per-task=$THREADS --mem $MEM -t $TIME -J $JOB -o $OUT/log/$JOB.out -e $OUT/log/$JOB.err --wrap "apptainer run $TEgenomeSimulator -M 2 -p $prefix -g $genome -r $repeat -r2 $repeat -o $OUT/${prefix}/te_scan_only -t $THREADS --te_scan_only"
+done
+# Submitted batch job 10956540
+# Submitted batch job 10956541
+# Submitted batch job 10956542
+# Submitted batch job 10956543
+# Submitted batch job 10956544

@@ -1,0 +1,504 @@
+---
+title: "Investigating the settings of identity"
+author: "Ting-Hsuan Chen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+# expecting to initially be in the cloned folder "TEgenomeSimulator_publication_code"
+WRK <- getwd()
+WRK <- '/workspace/cflthc/script/TEgenomeSimulator_publication_code' # clean up this line before git push
+OUT <- file.path(WRK, "output/tair10_sd_scenarios/")
+dir.create(file.path(OUT), recursive = TRUE, showWarnings = FALSE)
+knitr::opts_knit$set(root.dir=OUT)
+```
+
+```{r, load_TEsnoopeR, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(lme4)
+source(file.path(WRK, "script/functions.R"))
+```
+
+Tables and images saved in\
+`r OUT`
+
+## 1. Load files
+
+```{r, load_files, echo=FALSE}
+# item29: 5 duplicate runs per scenario (item29_tair10_sd_raw.sh)
+reps <- 1:5
+
+load_scenario_reps <- function(n){
+  lapply(reps, function(i){
+    SIM <- file.path(WRK, sprintf('output/TEgenomeSimulator_tair10_sd_scenario%s_rep%d_result', n, i))
+    prefix <- sprintf('tair10_sd_scenario%s_rep%d', n, i)
+    list(
+      genomefai = read.table(file.path(SIM, paste0(prefix, '_genome_sequence_out_final.fasta.fai')), header = FALSE, sep = '\t'),
+      tefai = read.table(file.path(SIM, paste0(prefix, '_repeat_sequence_out_final.fasta.fai')), header = FALSE, sep = '\t', comment.char = ""),
+      tegff = read.table(file.path(SIM, paste0(prefix, '_repeat_annotation_out_final.gff')), header = FALSE, sep = '\t', comment.char = "")
+    )
+  })
+}
+
+scenario1_list <- load_scenario_reps('1')
+scenario2_list <- load_scenario_reps('2')
+scenario3_list <- load_scenario_reps('3')
+scenario4_list <- load_scenario_reps('4')
+
+# rep 1 aliased to the original single-genome variable names, used unchanged by the
+# existing (single-representative-genome) histogram section below
+tegff1 <- scenario1_list[[1]]$tegff
+tegff2 <- scenario2_list[[1]]$tegff
+tegff3 <- scenario3_list[[1]]$tegff
+tegff4 <- scenario4_list[[1]]$tegff
+
+genomesize1 <- sum(scenario1_list[[1]]$genomefai$V2); tesize1 <- sum(scenario1_list[[1]]$tefai$V2); te_perc1 <- tesize1 * 100 / genomesize1
+genomesize2 <- sum(scenario2_list[[1]]$genomefai$V2); tesize2 <- sum(scenario2_list[[1]]$tefai$V2); te_perc2 <- tesize2 * 100 / genomesize2
+genomesize3 <- sum(scenario3_list[[1]]$genomefai$V2); tesize3 <- sum(scenario3_list[[1]]$tefai$V2); te_perc3 <- tesize3 * 100 / genomesize3
+genomesize4 <- sum(scenario4_list[[1]]$genomefai$V2); tesize4 <- sum(scenario4_list[[1]]$tefai$V2); te_perc4 <- tesize4 * 100 / genomesize4
+
+data.sum1 <- te_by_superfamily_sim_genome(tegff1); total_loci1 <- sum(data.sum1$count)
+data.sum2 <- te_by_superfamily_sim_genome(tegff2); total_loci2 <- sum(data.sum2$count)
+data.sum3 <- te_by_superfamily_sim_genome(tegff3); total_loci3 <- sum(data.sum3$count)
+data.sum4 <- te_by_superfamily_sim_genome(tegff4); total_loci4 <- sum(data.sum4$count)
+
+breakdown1 <- te_breakdown_sim_genome(tegff1)
+breakdown2 <- te_breakdown_sim_genome(tegff2)
+breakdown3 <- te_breakdown_sim_genome(tegff3)
+breakdown4 <- te_breakdown_sim_genome(tegff4)
+
+# all 5 replicates, tagged with rep - used for the mean +/- SD line graph further down
+breakdown1_allreps <- dplyr::bind_rows(lapply(reps, function(i){ bd <- te_breakdown_sim_genome(scenario1_list[[i]]$tegff); bd$rep <- i; bd }))
+breakdown2_allreps <- dplyr::bind_rows(lapply(reps, function(i){ bd <- te_breakdown_sim_genome(scenario2_list[[i]]$tegff); bd$rep <- i; bd }))
+breakdown3_allreps <- dplyr::bind_rows(lapply(reps, function(i){ bd <- te_breakdown_sim_genome(scenario3_list[[i]]$tegff); bd$rep <- i; bd }))
+breakdown4_allreps <- dplyr::bind_rows(lapply(reps, function(i){ bd <- te_breakdown_sim_genome(scenario4_list[[i]]$tegff); bd$rep <- i; bd }))
+```
+
+## 2 Mean ± SD across 5 replicates, coloured by scenario (replaces Fig 3E)
+
+Bin mean/SD are extracted via `ggplot_build()` from per-replicate histograms built
+purely for that purpose (not displayed) - same approach as `item29_Simulator_comparison_raw.Rmd`'s
+divergence mean/SD line graph, so the line graph's bins always match what a histogram
+of the same data would show.
+
+```{r, div_meansd_build, echo=FALSE}
+source(file.path(WRK, "script/functions.R"))
+ymax_ph <- 1e6  # placeholder for the (unused/undisplayed) histogram's y-axis; never affects the extracted bin counts
+hist_scenario1 <- plot_sim_divergence_by_loci_reps(breakdown1_allreps |> filter(div >= 0), ymax_ph, ymax_ph / 5, "scenario1")
+hist_scenario2 <- plot_sim_divergence_by_loci_reps(breakdown2_allreps |> filter(div >= 0), ymax_ph, ymax_ph / 5, "scenario2")
+hist_scenario3 <- plot_sim_divergence_by_loci_reps(breakdown3_allreps |> filter(div >= 0), ymax_ph, ymax_ph / 5, "scenario3")
+hist_scenario4 <- plot_sim_divergence_by_loci_reps(breakdown4_allreps |> filter(div >= 0), ymax_ph, ymax_ph / 5, "scenario4")
+
+bin_summary_scenario1 <- summarise_bins_from_histogram(hist_scenario1) |> mutate(test = 'scenario1: high identity + high sd')
+bin_summary_scenario2 <- summarise_bins_from_histogram(hist_scenario2) |> mutate(test = 'scenario2: low identity + high sd')
+bin_summary_scenario3 <- summarise_bins_from_histogram(hist_scenario3) |> mutate(test = 'scenario3: low identity + low sd')
+bin_summary_scenario4 <- summarise_bins_from_histogram(hist_scenario4) |> mutate(test = 'scenario4: high identity + low sd')
+
+bin_summary_all <- dplyr::bind_rows(bin_summary_scenario1, bin_summary_scenario2, bin_summary_scenario3, bin_summary_scenario4) |>
+  mutate(test = factor(test, levels = c('scenario4: high identity + low sd',
+                                         'scenario3: low identity + low sd',
+                                         'scenario2: low identity + high sd',
+                                         'scenario1: high identity + high sd')))
+
+ymax_div_meansd <- max(bin_summary_all$mean_count + bin_summary_all$sd_count, na.rm = TRUE) * 1.1
+
+# same colours already used for these 4 scenarios in the histogram above (section 2)
+scenario_colors <- c('scenario1: high identity + high sd' = '#CC6666',
+                      'scenario2: low identity + high sd'  = '#999966',
+                      'scenario3: low identity + low sd'   = '#0099AA',
+                      'scenario4: high identity + low sd'  = '#996699')
+```
+
+```{r, div_meansd_plot, echo=FALSE, fig.width = 6, fig.asp = 0.5}
+source(file.path(WRK, "script/functions.R"))
+plotwidth <- 6
+plotheight <- 3
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+p <- plot_binned_mean_sd_bygroup(bin_summary_all, group_col = "test", group_colors = scenario_colors,
+                                  xlab_text = "Divergence", ymax = ymax_div_meansd, use_count = TRUE, xlim = c(0, 1)) +
+  ggtitle("Sequence divergence distribution: \nScenarios controlled by mean identity, sd, alpha, and intact rate\n(mean ± SD, n=5 replicates)")
+p
+```
+
+```{r, save_div_meansd, echo=FALSE}
+png(filename = paste0(OUT, "sim_tair10_sd_scenarioAll_divergence_meansd.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(p)
+while (!is.null(dev.list()))  dev.off()
+```
+
+## 3. Test RepeatMasker recovery rate (5 replicates per scenario)
+
+Heatmap cells show the mean of the replicate recovery rates; a replicate with no simulated TE
+in a cell is skipped, and cells empty in all 5 replicates are grey. Numbers in the cells are the
+mean number of simulated TEs per replicate (k = thousands). Marginal bars show the
+pooled rate of each slice, sum(recovered) / sum(total), computed within each replicate and then
+summarised as mean ± SD across the 5 replicates.
+
+```{r, load_files_recovery, echo=FALSE}
+load_recovery_reps <- function(n){
+  dplyr::bind_rows(lapply(reps, function(i){
+    SIM <- file.path(WRK, sprintf('output/TEgenomeSimulator_tair10_sd_scenario%s_rep%d_result', n, i))
+    read.table(file.path(SIM, 'RM_recovery_eval/recovery_by_bin2D.tsv'), header = TRUE, sep = "\t", stringsAsFactors = FALSE) |>
+      mutate(scenario = paste0('scenario', n), rep = i)
+  }))
+}
+
+scenarios <- c('scenario1', 'scenario2', 'scenario3', 'scenario4')
+
+bindf <- dplyr::bind_rows(lapply(1:4, load_recovery_reps)) |>
+  mutate(rate = ifelse(total == 0, NA, rate))
+```
+
+```{r, prep_heatmap, echo=FALSE}
+# main heatmap data: mean of replicate rates per cell; sd, cv and n_reps (replicates with >= 1 TE
+# in the cell) are kept for the supplementary variability figure only
+heat_data <- bindf %>%
+  group_by(scenario, integrity_interval, identity_interval) %>%
+  summarise(n_reps = sum(total > 0),
+            n_mean = mean(total),
+            sd_rate = if (n_reps > 1) sd(rate, na.rm = TRUE) else NA_real_,
+            rate = if (n_reps > 0) mean(rate, na.rm = TRUE) else NA_real_,
+            .groups="drop") %>%
+  mutate(cv_rate = ifelse(rate > 0, sd_rate / rate, NA_real_))
+
+# pooled rate of a slice within each replicate, then mean +/- SD across replicates
+pooled_marginal <- function(df, slice_col){
+  df %>%
+    group_by(scenario, rep, .data[[slice_col]]) %>%
+    summarise(rate = ifelse(sum(total) == 0, NA_real_, sum(recovered) / sum(total)), .groups="drop") %>%
+    group_by(scenario, .data[[slice_col]]) %>%
+    summarise(sd = sd(rate, na.rm = TRUE), rate = mean(rate, na.rm = TRUE), .groups="drop") %>%
+    filter(!is.nan(rate)) %>%
+    mutate(ymin = pmax(rate - sd, 0), ymax = pmin(rate + sd, 1))
+}
+
+# top marginal rate by integrity_interval
+marg_x <- pooled_marginal(bindf, "integrity_interval")
+
+# right marginal rate by identity_interval
+marg_y <- pooled_marginal(bindf, "identity_interval")
+
+# all bin labels, so marginal bar axes match the heatmap even when a slice is empty
+integrity_bins <- sort(unique(bindf$integrity_interval))
+identity_bins <- sort(unique(bindf$identity_interval))
+```
+
+### 3.1 Recovery rate heatmaps (Fig 5B)
+
+```{r, plot_heatmap_fun, echo=FALSE}
+library(patchwork)
+library(cowplot) # for get_legend
+
+plot_recovery_heatmap <- function(scen){
+  # Heatmap
+  # mean number of simulated TEs per replicate, in white on dark cells and black on light cells
+  n_labels <- heat_data |>
+    filter(scenario == scen, n_reps > 0) |>
+    mutate(label = case_when(n_mean >= 1000 ~ sprintf("%.1fk", n_mean / 1000),
+                             n_mean >= 1 ~ sprintf("%.0f", n_mean),
+                             TRUE ~ "<1"),
+           label_colour = ifelse(rate < 0.6, "white", "black"))
+
+  heat_p <- ggplot(heat_data |> filter(scenario == scen), aes(x=integrity_interval, y=identity_interval, fill=rate)) +
+    geom_tile(color="grey80") +
+    geom_text(data = n_labels, aes(label = label, colour = label_colour), size = 1.8) +
+    scale_colour_identity() +
+    scale_fill_viridis_c(option="cividis", na.value = "grey85", limits = c(0, 1)) +
+    theme_minimal(base_size = 10) +
+    theme(axis.text.y = element_text(size = rel(1.2)),
+            axis.text.x = element_text(size = rel(1.2), angle=45, hjust=1),
+            axis.title.x = element_text(size = rel(1.2)),
+            axis.title.y = element_text(size = rel(1.2)),
+            legend.position="none",
+            panel.background = element_rect(fill = "white", color = "black")) +
+    labs(x="Integrity bin", y="Identity bin", fill="Rate")
+
+  # Top marginal barplot
+  top_p <- ggplot(marg_x |> filter(scenario == scen), aes(x=integrity_interval, y=rate, fill=rate)) +
+    geom_col() +
+    geom_errorbar(aes(ymin = ymin, ymax = ymax), width = 0.3, linewidth = 0.3) +
+    scale_x_discrete(limits = integrity_bins) +  # keep all bins so bars stay aligned with the heatmap
+    scale_fill_viridis_c(option="cividis", guide="none", limits = c(0, 1)) +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.25)) +
+    labs(title = scen) +
+    theme_minimal(base_size = 8) +
+    theme(axis.text.y = element_text(size = rel(1.5)),
+            axis.text.x=element_blank(),
+          axis.ticks.x=element_blank(),
+            axis.title.y = element_text(size = rel(1.5)),
+            legend.position="none",
+            panel.background = element_rect(fill = "white", color = "black")) +
+    labs(x=NULL, y="Pooled rate")
+
+  # Right marginal barplot (flip coordinates)
+  right_p <- ggplot(marg_y |> filter(scenario == scen), aes(x=identity_interval, y=rate, fill=rate)) +
+    geom_col() +
+    geom_errorbar(aes(ymin = ymin, ymax = ymax), width = 0.3, linewidth = 0.3) +
+    scale_x_discrete(limits = identity_bins) +  # keep all bins so bars stay aligned with the heatmap
+    coord_flip() +
+    scale_fill_viridis_c(option="cividis", guide="none", limits = c(0, 1)) +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.25)) +
+    theme_minimal(base_size = 8) +
+    theme(axis.text.y=element_blank(), axis.ticks.y=element_blank(),
+            axis.title.x = element_text(size = rel(1.5)),
+          axis.text.x = element_text(size = rel(1.5), angle=45, hjust=1),
+            legend.position="none",
+            panel.background = element_rect(fill = "white", color = "black")) +
+    labs(x=NULL, y="Pooled rate")
+
+  # Grab the legend from a dummy plot with the same fill scale
+  legend_p <- ggplot(heat_data |> filter(scenario == scen), aes(x=integrity_interval,
+                                    y=identity_interval, fill=rate)) +
+    geom_tile() +
+    scale_fill_viridis_c(option="cividis", limits = c(0, 1)) +
+    labs(fill="Rate") +
+    theme(legend.position="right")
+
+  legend_g <- patchwork::wrap_elements(get_legend(legend_p))
+
+  # assemble top row (top_p + empty)
+  top_row <- top_p + plot_spacer() +
+    plot_layout(widths = c(2,1))  # adjust widths top row
+
+  # assemble main row (heatmap + right)
+  main_row <- heat_p + right_p +
+    plot_layout(widths = c(2,1))  # right_p half the width
+
+  # combine vertically (top half height of heatmap)
+  combined <- top_row / main_row +
+    plot_layout(heights = c(1,2))  # top half height of heatmap
+
+  # put legend on top-right using | operator
+  combined | legend_g
+}
+```
+
+```{r, plot_heatmaps, echo=FALSE, fig.width = 8, fig.asp = 0.5625, out.width="60%"}
+plotwidth <- 8
+plotheight <- 4.5
+heatmap_plots <- setNames(lapply(scenarios, plot_recovery_heatmap), scenarios)
+for (scen in scenarios) print(heatmap_plots[[scen]])
+```
+
+```{r, save_heatmaps, echo=FALSE}
+for (scen in scenarios){
+  png(filename = paste0(OUT, "sim_tair10_sd_", scen, "_disco_rate_heatmap.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+  print(heatmap_plots[[scen]])
+  while (!is.null(dev.list()))  dev.off()
+}
+```
+
+### 3.2 Between-replicate variability per cell (supplementary)
+
+Fill is the SD of the recovery rate across replicates. Numbers mark cells where fewer than 5
+replicates contain any simulated TE (value = number of replicates); light blue cells hold TEs in only
+one replicate, so no SD can be computed.
+
+```{r, plot_heatmap_sd, echo=FALSE, fig.width = 10, fig.asp = 0.9, out.width="80%"}
+plotwidth <- 10
+plotheight <- 9
+sd_p <- ggplot(heat_data |> filter(n_reps > 0), aes(x=integrity_interval, y=identity_interval, fill=sd_rate)) +
+  geom_tile(color="grey80") +
+  geom_text(data = heat_data |> filter(n_reps > 0, n_reps < 5), aes(label = n_reps), size = 3, colour = "red") +
+  scale_fill_viridis_c(option="magma", direction = -1, na.value = "#9ECAE1") +  # light blue, outside the magma range and distinct from Fig 5B's grey empty bins
+  facet_wrap(~scenario, ncol = 2) +
+  theme_minimal(base_size = 10) +
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x="Integrity bin", y="Identity bin", fill="SD of rate\n(n=5 reps)")
+sd_p
+```
+
+```{r, save_heatmap_sd, echo=FALSE}
+png(filename = paste0(OUT, "sim_tair10_sd_scenarioAll_disco_rate_heatmap_sd.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(sd_p)
+while (!is.null(dev.list()))  dev.off()
+write.table(heat_data, file = paste0(OUT, "sim_tair10_sd_scenarioAll_disco_rate_by_cell.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
+```
+
+### 3.3 Overall recovery per scenario (mean ± SD across replicates)
+
+```{r, recovery_summary, echo=FALSE}
+recovery_summary <- bindf %>%
+  group_by(scenario, rep) %>%
+  summarise(total = sum(total), recovered = sum(recovered), .groups="drop") %>%
+  mutate(rate = recovered / total) %>%
+  group_by(scenario) %>%
+  summarise(n_reps = n(),
+            total_mean = mean(total), total_sd = sd(total),
+            rate_mean = mean(rate), rate_sd = sd(rate),
+            .groups="drop")
+kable(recovery_summary, digits = 4)
+write.table(recovery_summary, file = paste0(OUT, "sim_tair10_sd_scenarioAll_recovery_summary.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
+```
+
+### 3.4 Binomial GLMM: identity vs integrity dependence
+
+Recovery rises steeply with identity (≈0 below 0.5, ≈0.95 above 0.75), while integrity only
+matters in the lowest bin (< 0.1), where recovery plateaus at ≈0.70-0.77 even at identity 0.95.
+The main model is built to follow that shape, per scenario:
+
+`cbind(recovered, total - recovered) ~ ns(identity, df = 3) * integrity_low + (1 | rep) + (1 | obs)`
+
+* `ns(identity, df = 3)`: natural cubic spline of the identity bin midpoint (allows the threshold).
+  df is capped at (number of identity bins - 2) so the spline cannot pass through every point
+  and oscillate between them; scenario 4 has only 4 identity bins and gets df = 2.
+* `integrity_low`: integrity bin `[0.0-0.1)` vs the rest (`>=0.1`, the reference level).
+* `(1 | obs)`: observation-level random effect per cell × replicate, absorbing the extra-binomial
+  variation between cells (the dispersion ratio, Pearson χ² / residual df, should be ≤ 1).
+* `rep_sd` near 0 (singular fit) means the replicates do not differ beyond sampling noise.
+
+Likelihood-ratio tests (LRT) drop all terms involving one variable (main effect + interaction).
+With ~180,000 TEs per replicate almost any term is significant, so compare the size of the LRT
+statistics rather than p-values. The two linear models (identity and integrity as bin midpoints,
+centred at 0.5 and scaled so one unit is one bin; odds ratios per 0.1 increase) are kept for
+reference: they cannot follow the identity threshold or the low-integrity plateau, so their
+integrity statistics understate the effect of the lowest integrity bin.
+
+```{r, glmm_recovery, echo=FALSE, message=FALSE, warning=FALSE}
+library(lme4)
+library(splines)
+
+bin_mid_c <- function(interval){
+  (as.numeric(sub('^\\[([0-9.]+)-.*', '\\1', interval)) + 0.05 - 0.5) * 10
+}
+
+glmm_df <- bindf %>%
+  filter(total > 0) %>%
+  mutate(identity = bin_mid_c(identity_interval),
+         integrity = bin_mid_c(integrity_interval),
+         integrity_low = factor(ifelse(integrity_interval == '[0.0-0.1)', '<0.1', '>=0.1'), levels = c('>=0.1', '<0.1')),
+         rep = factor(rep),
+         obs = factor(row_number()))
+
+# identity / integrity terms and random effects of each model; the first is the main model
+# (%d = spline df, set per scenario in fit_recovery_glmm)
+glmm_specs <- list(
+  list(identity = "ns(identity, df = %d)", integrity = "integrity_low", re = "(1 | rep) + (1 | obs)"),
+  list(identity = "identity", integrity = "integrity", re = "(1 | rep) + (1 | obs)"),
+  list(identity = "identity", integrity = "integrity", re = "(1 | rep)")
+)
+
+fit_recovery_glmm <- function(scen, spec){
+  df <- glmm_df |> filter(scenario == scen)
+  fit <- function(fixed) glmer(as.formula(paste("cbind(recovered, total - recovered) ~", fixed, "+", spec$re)),
+                               data = df, family = binomial, control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e5)))
+  identity_term <- if (grepl("%d", spec$identity)) sprintf(spec$identity, min(3, n_distinct(df$identity) - 2)) else spec$identity
+  model <- paste(identity_term, "*", spec$integrity, "+", spec$re)
+  full <- fit(paste(identity_term, "*", spec$integrity))
+  lrt_identity <- anova(fit(spec$integrity), full)
+  lrt_integrity <- anova(fit(identity_term), full)
+  fe <- coef(summary(full))
+  list(
+    model_fit = full,
+    fixed = data.frame(scenario = scen, model = model, term = rownames(fe), estimate = fe[, "Estimate"], se = fe[, "Std. Error"],
+                       odds_ratio = exp(fe[, "Estimate"]), z = fe[, "z value"], p = fe[, "Pr(>|z|)"], row.names = NULL),
+    lrt = data.frame(scenario = scen, model = model,
+                     n_cells = nrow(df),
+                     rep_sd = attr(VarCorr(full)$rep, "stddev"),
+                     singular = isSingular(full),
+                     dispersion = sum(residuals(full, type = "pearson")^2) / df.residual(full),
+                     identity_chisq = lrt_identity$Chisq[2], identity_df = lrt_identity$Df[2], identity_p = lrt_identity$`Pr(>Chisq)`[2],
+                     integrity_chisq = lrt_integrity$Chisq[2], integrity_df = lrt_integrity$Df[2], integrity_p = lrt_integrity$`Pr(>Chisq)`[2], row.names = NULL)
+  )
+}
+
+glmm_fits <- unlist(lapply(glmm_specs, function(spec) lapply(scenarios, fit_recovery_glmm, spec = spec)), recursive = FALSE)
+glmm_fixed <- dplyr::bind_rows(lapply(glmm_fits, `[[`, "fixed"))
+glmm_lrt <- dplyr::bind_rows(lapply(glmm_fits, `[[`, "lrt"))
+glmm_main <- setNames(lapply(glmm_fits[seq_along(scenarios)], `[[`, "model_fit"), scenarios)
+
+kable(glmm_lrt, digits = 4, caption = "LRT for identity terms and integrity terms (each dropping main effect + interaction)")
+kable(glmm_fixed, digits = 4, caption = "Fixed effects of the full models (linear models: odds ratio per 0.1 increase)")
+write.table(glmm_lrt, file = paste0(OUT, "sim_tair10_sd_scenarioAll_recovery_glmm_lrt.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
+write.table(glmm_fixed, file = paste0(OUT, "sim_tair10_sd_scenarioAll_recovery_glmm_fixed.tsv"), sep = "\t", quote = FALSE, row.names = FALSE)
+```
+
+**A**: LRT χ² of the main model for dropping the identity terms vs the integrity terms.
+**B**: recovery rate against identity. Large points with error bars are pooled rates,
+sum(recovered) / sum(total), for integrity < 0.1 and ≥ 0.1 (mean ± SD of the 5 replicates);
+small light points are the 9 individual integrity bins ≥ 0.1 (mean of replicate rates), showing
+that they behave alike. Lines are the main GLMM's fixed-effect predictions (random effects at 0,
+i.e. a typical cell).
+
+```{r, plot_glmm, echo=FALSE, fig.width = 10, fig.asp = 0.65, out.width="90%"}
+plotwidth <- 10
+plotheight <- 6.5
+integrity_cols <- c('<0.1' = '#D55E00', '>=0.1' = '#0072B2')
+
+# A: dumbbell of LRT chi-square, main model
+lrt_long <- glmm_lrt %>%
+  filter(grepl("^ns\\(", model)) %>%
+  select(scenario, identity_chisq, integrity_chisq) %>%
+  pivot_longer(-scenario, names_to = "terms", values_to = "chisq") %>%
+  mutate(terms = sub("_chisq", "", terms))
+
+glmm_lrt_p <- ggplot(lrt_long, aes(x = chisq, y = scenario)) +
+  geom_line(aes(group = scenario), colour = "grey70", linewidth = 1) +
+  geom_point(aes(colour = terms), size = 3) +
+  scale_x_log10() +
+  scale_y_discrete(limits = rev) +
+  scale_colour_manual(values = c(identity = '#0072B2', integrity = '#D55E00')) +
+  theme_minimal(base_size = 10) +
+  theme(panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x = "LRT chi-square (log scale)", y = NULL, colour = "Terms dropped", title = "A")
+
+# B: observed pooled rates and model predictions against identity
+obs_grouped <- glmm_df %>%
+  group_by(scenario, rep, integrity_low, identity_interval, identity) %>%
+  summarise(rate = sum(recovered) / sum(total), .groups = "drop") %>%
+  group_by(scenario, integrity_low, identity_interval, identity) %>%
+  summarise(sd = sd(rate), rate = mean(rate), .groups = "drop") %>%
+  mutate(identity_mid = identity / 10 + 0.5)
+
+obs_bins <- heat_data %>%
+  filter(n_reps > 0, integrity_interval != '[0.0-0.1)') %>%
+  mutate(identity_mid = bin_mid_c(identity_interval) / 10 + 0.5)
+
+# predictions only over the identity range observed for each integrity group (no extrapolation)
+glmm_pred <- glmm_df %>%
+  group_by(scenario, integrity_low) %>%
+  summarise(id_min = min(identity), id_max = max(identity), .groups = "drop") %>%
+  group_by(scenario, integrity_low) %>%
+  reframe(identity = seq(id_min, id_max, length.out = 100)) %>%
+  group_by(scenario) %>%
+  group_modify(function(nd, key) mutate(nd, rate = predict(glmm_main[[key$scenario]], newdata = nd, re.form = NA, type = "response"))) %>%
+  ungroup() %>%
+  mutate(identity_mid = identity / 10 + 0.5)
+
+glmm_fit_p <- ggplot(obs_grouped, aes(x = identity_mid, y = rate, colour = integrity_low)) +
+  geom_point(data = obs_bins, aes(x = identity_mid, y = rate), inherit.aes = FALSE,
+             colour = '#0072B2', alpha = 0.25, size = 1, position = position_jitter(width = 0.01, height = 0, seed = 1)) +
+  geom_line(data = glmm_pred, linewidth = 0.8) +
+  geom_errorbar(aes(ymin = pmax(rate - sd, 0), ymax = pmin(rate + sd, 1)), width = 0.02) +
+  geom_point(size = 2) +
+  facet_wrap(~scenario, nrow = 1) +
+  scale_colour_manual(values = integrity_cols) +
+  scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.25)) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.25)) +
+  theme_minimal(base_size = 10) +
+  theme(panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x = "Identity (bin midpoint)", y = "Recovery rate", colour = "Integrity", title = "B")
+
+glmm_p <- glmm_lrt_p / glmm_fit_p + plot_layout(heights = c(1, 1.4))
+glmm_p
+```
+
+```{r, save_plot_glmm, echo=FALSE}
+png(filename = paste0(OUT, "sim_tair10_sd_scenarioAll_recovery_glmm_fit.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(glmm_p)
+while (!is.null(dev.list()))  dev.off()
+```

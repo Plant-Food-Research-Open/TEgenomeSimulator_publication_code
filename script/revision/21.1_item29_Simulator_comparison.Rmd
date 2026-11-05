@@ -364,6 +364,231 @@ print(plot)
 while (!is.null(dev.list()))  dev.off()
 ```
 
+#### Supplementary: simulator-reported vs RepeatMasker-detected vs post-fix divergence
+Three per-locus divergence distributions are compared for each simulator:
+
+- **Reported**: `div = 1 - Identity` from the simulator's GFF (`breakdown*_allreps`).
+- **RepeatMasker**: `mismatch` from TEgenomeSimulator's `te_scan_only` post-simulation
+  detection (`processed_output.temp`), i.e. (substitutions + insertions + deletions) /
+  aligned length from the RepeatMasker `.out`. The simulator's reported divergence is
+  defined the same way (substitutions and indels), so the two are directly comparable.
+  All rows are used (no filtering).
+- **Post-fix**: divergence implied by the corrected identity
+  `identity + (1 - identity) * 0.5` (fraction scale), i.e. `0.5 * div`.
+
+Histograms use replicate 1; the Wasserstein comparison uses all 5 replicates.
+
+```{r, fig1.04.rm.load, echo=FALSE}
+div_sources <- c("Reported", "RepeatMasker", "Post-fix")
+div_source_colors <- c("Reported" = "#1b9e77", "RepeatMasker" = "#d95f02", "Post-fix" = "#7570b3")
+
+rm_c1_paths <- list(
+  TEGS   = 'output/mode0/TEgenomeSimulator_m0_chr10000k_rep%d_result/te_scan_only/TEgenomeSimulator_m0_chr10000k_rep%d_result/processed_output.temp',
+  dnvTEe = 'output/denovoTEeval/denovoTEeval_rep%d/te_scan_only/TEgenomeSimulator_denovoTEeval_rep%d_result/processed_output.temp'
+)
+rm_c1_allreps <- dplyr::bind_rows(lapply(names(rm_c1_paths), function(s){
+  dplyr::bind_rows(lapply(reps, function(i){
+    rm <- read.table(file.path(WRK, sprintf(rm_c1_paths[[s]], i, i)), header = TRUE, sep = '\t', comment.char = "")
+    data.frame(simulator = s, rep = i, source = "RepeatMasker", div = rm$mismatch)
+  }))
+}))
+
+sim_div_3src <- function(breakdown_allreps, simulator){
+  bd <- breakdown_allreps |> filter(div >= 0)
+  dplyr::bind_rows(
+    data.frame(simulator = simulator, rep = bd$rep, source = "Reported", div = bd$div),
+    data.frame(simulator = simulator, rep = bd$rep, source = "Post-fix",
+               div = 1 - (bd$idn + (1 - bd$idn) * 0.5))
+  )
+}
+
+div_3src_allreps <- dplyr::bind_rows(
+  sim_div_3src(breakdown1_allreps, "TEGS"),
+  sim_div_3src(breakdown2_allreps, "dnvTEe"),
+  rm_c1_allreps
+) |>
+  mutate(source = factor(source, levels = div_sources),
+         simulator = factor(simulator, levels = c("TEGS", "dnvTEe")))
+
+div_3src_summary <- div_3src_allreps |>
+  group_by(simulator, source, rep) |>
+  summarise(n = n(), mean = mean(div), median = median(div), sd = sd(div), .groups = "drop")
+knitr::kable(div_3src_summary, digits = 4)
+
+# shared y-axis for the two rep-1 histograms below
+ymax_rm_div <- div_3src_allreps |> filter(rep == 1) |>
+  mutate(.bin = cut(div, breaks = bin_breaks_div, include.lowest = TRUE, right = FALSE)) |>
+  count(simulator, source, .bin) |> pull(n) |> max()
+ymax_rm_div <- ceiling(ymax_rm_div * 1.05 / 100) * 100
+
+plot_div_3src <- function(df, genomename, ymax){
+  ggplot(df, aes(div, fill = source)) +
+    geom_histogram(breaks = bin_breaks_div, position = "identity", alpha = 0.4, color = NA) +
+    scale_fill_manual(values = div_source_colors) +
+    ggtitle(paste0("Genome: ", genomename, " (rep 1)")) +
+    xlab("Divergence (p-dist)") + ylab("TE loci") +
+    scale_y_continuous(limits = c(0, ymax)) +
+    scale_x_continuous(breaks = seq(0, 1, by = 0.1)) +
+    coord_cartesian(xlim = c(0, 0.6)) +
+    theme(title = element_text(size = 8),
+          axis.text.y = element_text(size = rel(1.8)),
+          axis.text.x = element_text(size = rel(1.8)),
+          axis.title.x = element_text(size = rel(1.8)),
+          axis.title.y = element_text(size = rel(1.8)),
+          legend.title = element_blank(),
+          legend.text = element_text(size = rel(1)),
+          legend.key.size = unit(0.4, "cm"),
+          legend.position = c(0.8, 0.85),
+          legend.background = element_blank(),
+          panel.background = element_rect(fill = "white", color = "black"))
+}
+```
+
+```{r, fig1.04.rm.tegs, echo=FALSE, fig.width = 6, fig.asp = .67}
+plotwidth <- 6
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot <- plot_div_3src(div_3src_allreps |> filter(simulator == "TEGS", rep == 1), genomename1, ymax_rm_div)
+plot
+```
+
+```{r, save_fig1.04.rm.tegs, echo=FALSE}
+png(filename = paste0(OUT, "supp_te_loci_divergence_rm_vs_sim_", genomename1, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, fig1.04.rm.dnvte, echo=FALSE, fig.width = 6, fig.asp = .67}
+plotwidth <- 6
+plotheight <- 4
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot <- plot_div_3src(div_3src_allreps |> filter(simulator == "dnvTEe", rep == 1), genomename2, ymax_rm_div)
+plot
+```
+
+```{r, save_fig1.04.rm.dnvte, echo=FALSE}
+png(filename = paste0(OUT, "supp_te_loci_divergence_rm_vs_sim_", genomename2, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Per replicate, the 1D Wasserstein distance is computed between each pair of the three
+distributions. For each simulator, W(Reported, RepeatMasker) and W(Post-fix, RepeatMasker)
+are compared with a paired t-test across the 5 replicates (paired because both distances in
+a replicate share the same RepeatMasker sample); a lower distance means closer to what
+RepeatMasker detects.
+
+```{r, fig1.04.rm.wasserstein, echo=FALSE}
+# Exact 1D Wasserstein (earth-mover's) distance between two empirical samples of
+# possibly different size, via the area between their empirical CDFs - equivalent to
+# scipy.stats.wasserstein_distance. Also used by section 2.05a.
+wasserstein1d <- function(u, v) {
+  u <- sort(as.numeric(u)); v <- sort(as.numeric(v))
+  all_values <- sort(c(u, v))
+  n <- length(all_values)
+  deltas <- diff(all_values)
+  bp <- all_values[-n]
+  u_cdf <- findInterval(bp, u) / length(u)
+  v_cdf <- findInterval(bp, v) / length(v)
+  sum(abs(u_cdf - v_cdf) * deltas)
+}
+
+div_src_pairs <- list(c("Reported", "RepeatMasker"), c("Post-fix", "RepeatMasker"), c("Reported", "Post-fix"))
+
+wasserstein_3src <- dplyr::bind_rows(lapply(levels(div_3src_allreps$simulator), function(s){
+  dplyr::bind_rows(lapply(reps, function(i){
+    d <- div_3src_allreps |> filter(simulator == s, rep == i)
+    dplyr::bind_rows(lapply(div_src_pairs, function(p){
+      data.frame(simulator = s, rep = i, pair = paste(p[1], "vs", p[2]),
+                 wasserstein = wasserstein1d(d$div[d$source == p[1]], d$div[d$source == p[2]]))
+    }))
+  }))
+})) |>
+  mutate(simulator = factor(simulator, levels = c("TEGS", "dnvTEe")),
+         pair = factor(pair, levels = sapply(div_src_pairs, paste, collapse = " vs ")))
+
+write.table(wasserstein_3src, file = file.path(OUT, "wasserstein_div_reported_rm_postfix_per_replicate.tsv"),
+            sep = "\t", quote = FALSE, row.names = FALSE)
+
+wasserstein_3src_summary <- wasserstein_3src |>
+  group_by(simulator, pair) |>
+  summarise(n = n(), mean_wasserstein = mean(wasserstein), sd_wasserstein = sd(wasserstein), .groups = "drop")
+
+write.table(wasserstein_3src_summary, file = file.path(OUT, "wasserstein_div_reported_rm_postfix_meansd.tsv"),
+            sep = "\t", quote = FALSE, row.names = FALSE)
+
+knitr::kable(wasserstein_3src_summary, digits = 4)
+
+# Paired t-test (by replicate): W(Reported, RM) vs W(Post-fix, RM); columns follow tidy_ttest_dist()
+wasserstein_3src_ttests <- dplyr::bind_rows(lapply(levels(wasserstein_3src$simulator), function(s){
+  w <- wasserstein_3src |> filter(simulator == s) |> arrange(rep)
+  x <- w$wasserstein[w$pair == "Reported vs RepeatMasker"]
+  y <- w$wasserstein[w$pair == "Post-fix vs RepeatMasker"]
+  test <- t.test(x, y, paired = TRUE)
+  data.frame(
+    comparison = paste0(s, ": W(Reported, RM) vs W(Post-fix, RM)"),
+    test_type = "paired t-test (by replicate)",
+    n1 = length(x), n2 = length(y),
+    mean1 = mean(x), mean2 = mean(y), reference = NA_real_,
+    mean_diff = mean(x - y),
+    t_statistic = unname(test$statistic),
+    df = unname(test$parameter),
+    p_value = test$p.value,
+    conf_low = test$conf.int[1], conf_high = test$conf.int[2],
+    alternative = test$alternative,
+    simulator = s, group1 = "Reported vs RepeatMasker", group2 = "Post-fix vs RepeatMasker",
+    stringsAsFactors = FALSE
+  )
+}))
+
+write.table(wasserstein_3src_ttests, file = file.path(OUT, "wasserstein_div_reported_rm_postfix_ttest.tsv"),
+            sep = "\t", quote = FALSE, row.names = FALSE)
+
+knitr::kable(wasserstein_3src_ttests, digits = 4)
+```
+
+Files saved as: wasserstein_div_reported_rm_postfix_per_replicate.tsv,
+wasserstein_div_reported_rm_postfix_meansd.tsv, wasserstein_div_reported_rm_postfix_ttest.tsv
+
+```{r, fig1.04.rm.wasserstein.bars, echo=FALSE, fig.width = 6, fig.asp = .6}
+plotwidth <- 6
+plotheight <- 3.6
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+
+# bracket between the two "vs RepeatMasker" bars; asterisk if p < 0.001
+bracket_df <- wasserstein_3src_summary |>
+  filter(pair != "Reported vs Post-fix") |>
+  group_by(simulator) |>
+  summarise(y = max(mean_wasserstein + sd_wasserstein) * 1.08, .groups = "drop") |>
+  left_join(wasserstein_3src_ttests |> select(simulator, p_value) |>
+              mutate(simulator = factor(simulator, levels = levels(wasserstein_3src_summary$simulator))),
+            by = "simulator") |>
+  mutate(label = ifelse(p_value < 0.001, "*", "ns"))
+
+plot <- ggplot(wasserstein_3src_summary, aes(x = pair, y = mean_wasserstein, fill = pair)) +
+  geom_col(width = 0.6, show.legend = FALSE) +
+  geom_errorbar(aes(ymin = mean_wasserstein - sd_wasserstein, ymax = mean_wasserstein + sd_wasserstein), width = 0.15) +
+  geom_segment(data = bracket_df, aes(x = 1, xend = 2, y = y, yend = y), inherit.aes = FALSE) +
+  geom_text(data = bracket_df, aes(x = 1.5, y = y, label = label), inherit.aes = FALSE, vjust = -0.4, size = 4.5) +
+  facet_wrap(~ simulator) +
+  scale_fill_brewer(palette = "Set2") +
+  scale_x_discrete(labels = function(x) gsub(" vs ", "\nvs\n", x)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  labs(x = NULL, y = "Wasserstein distance\n(TE loci divergence)",
+       title = "Mean ± SD, n = 5; paired t-test across replicates") +
+  theme_bw(base_size = 11) +
+  theme(panel.grid.minor = element_blank(),
+        title = element_text(size = 10),
+        axis.text.x = element_text(size = rel(0.9)))
+plot
+```
+
+```{r, save_fig1.04.rm.wasserstein.bars, echo=FALSE}
+png(filename = paste0(OUT, "wasserstein_div_reported_rm_postfix_bars.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
 #### Mean ± SD across 5 replicates (superfamilies pooled)
 
 Bin mean/SD are extracted directly from the built histograms above via `ggplot_build()`
@@ -625,7 +850,6 @@ print(plot)
 while (!is.null(dev.list()))  dev.off()
 ```
 
-File saved as: genome_size_piegraph_`r genomename`.png
 
 ### 2.01a t-test on simulated TE bases (n = 5 replicates)
 Compares total simulated TE bases (`tesize`) between simulators. dnvTEe vs TEGS is a
@@ -853,6 +1077,12 @@ plot <- plot_te_bp_piechart(data.sum5, genomename5)
 plot
 ```
 
+```{r, save_fig2.03.04, echo=FALSE}
+png(filename = paste0(OUT, "te_bp_piegraph_", genomename5, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
 #### Mean ± SD across replicates, dodged by superfamily (Ori not replicated)
 ```{r, fig2.03.05.meansd, echo=FALSE, fig.width = 10, fig.asp = 0.6}
 plotwidth <- 10
@@ -870,11 +1100,6 @@ print(plot)
 while (!is.null(dev.list()))  dev.off()
 ```
 
-```{r, save_fig2.03.04, echo=FALSE}
-png(filename = paste0(OUT, "te_bp_piegraph_", genomename5, ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
-print(plot)
-while (!is.null(dev.list()))  dev.off()
-```
 
 ### 2.03a Jensen-Shannon divergence: TE composition by superfamily (per replicate)
 Categorical distribution of TE bases and TE loci counts across superfamilies (as in
@@ -1474,19 +1699,7 @@ i's TEGS composition table); Garlic/m2/m2+m0 vs Ori compares each replicate agai
 Ori's single fixed distribution (`breakdown0_allreps`, not replicated).
 
 ```{r, wasserstein_div_itg, echo=FALSE}
-# Exact 1D Wasserstein (earth-mover's) distance between two empirical samples of
-# possibly different size, via the area between their empirical CDFs - equivalent to
-# scipy.stats.wasserstein_distance.
-wasserstein1d <- function(u, v) {
-  u <- sort(as.numeric(u)); v <- sort(as.numeric(v))
-  all_values <- sort(c(u, v))
-  n <- length(all_values)
-  deltas <- diff(all_values)
-  bp <- all_values[-n]
-  u_cdf <- findInterval(bp, u) / length(u)
-  v_cdf <- findInterval(bp, v) / length(v)
-  sum(abs(u_cdf - v_cdf) * deltas)
-}
+# wasserstein1d() is defined earlier in section 1.04 (chunk fig1.04.rm.wasserstein).
 
 # df_a/df_b: breakdown*_allreps tables (columns rep, div, itg, ...). If single_ref =
 # TRUE, df_b is used as one fixed reference distribution (e.g. Ori) for every
@@ -1622,16 +1835,18 @@ while (!is.null(dev.list()))  dev.off()
 # Shared by the divergence and integrity versions below: bars = mean +/- SD per
 # simulator's Wasserstein-distance-to-Ori values; brackets = the 3 pairwise unpaired
 # t-tests among GARLIC/m2/m2+m0, staggered so the bracket spanning the two outer bars
-# sits highest.
-plot_wasserstein_ori_bars <- function(metric_val, ylab_text, title_text) {
-  bars <- wasserstein_summary |>
+# sits highest. summary_df/ttest_df default to the divergence/integrity tables; the
+# entropy section (2.07c) passes its own tables, where `metric` holds the sequence category.
+plot_wasserstein_ori_bars <- function(metric_val, ylab_text, title_text,
+                                      summary_df = wasserstein_summary, ttest_df = wasserstein_ttests) {
+  bars <- summary_df |>
     dplyr::filter(comparison %in% c("GARLIC vs Ori", "m2 vs Ori", "m2+m0 vs Ori"), metric == metric_val) |>
     dplyr::mutate(comparison = factor(comparison, levels = c("GARLIC vs Ori", "m2 vs Ori", "m2+m0 vs Ori")))
 
   top <- max(bars$mean_wasserstein + bars$sd_wasserstein)
   step <- top * 0.15
 
-  stats <- wasserstein_ttests |>
+  stats <- ttest_df |>
     dplyr::filter(metric == metric_val, !is.na(group2)) |>
     dplyr::mutate(
       group1 = factor(group1, levels = levels(bars$comparison)),
@@ -1690,21 +1905,42 @@ while (!is.null(dev.list()))  dev.off()
 
 ### 2.06 k-mer spectrum
 ```{r, load_files_kmerspectrum, echo=FALSE}
-# Read CSV with read.table
-kmer0 <- read.table(file.path(WRK, 'output/TE_sim_eval/original/kmer/kmer_counts_k6.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-kmer1 <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m2/kmer/kmer_counts_k6.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-kmer2 <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m0/kmer/kmer_counts_k6.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-kmer3 <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m0_full/kmer/kmer_counts_k6.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-kmer4 <- read.table(file.path(WRK, 'output/TE_sim_eval/Garlic/kmer/kmer_counts_k6.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-# Reshape to long format
-kmer0_long <- kmer0 |> pivot_longer(cols = c(genome, nonTE, TEonly), names_to = "Category", values_to = "Count") |> mutate(simulator = "Ori")
-kmer1_long <- kmer1 |> pivot_longer(cols = c(genome, nonTE, TEonly), names_to = "Category", values_to = "Count") |> mutate(simulator = "m2")
-kmer2_long <- kmer2 |> pivot_longer(cols = c(genome, nonTE, TEonly), names_to = "Category", values_to = "Count") |> mutate(simulator = "m2+m0")
-kmer3_long <- kmer3 |> pivot_longer(cols = c(genome, nonTE, TEonly), names_to = "Category", values_to = "Count") |> mutate(simulator = "m0full")
-kmer4_long <- kmer4 |> pivot_longer(cols = c(genome, nonTE, TEonly), names_to = "Category", values_to = "Count") |> mutate(simulator = "Garlic")
+# k-mer count tables: Ori is a single genome; GARLIC/m2/m2+m0 have one table per replicate.
+# These paths are reused by the per-replicate JSD in section 2.06a.
+ori_kmer_path     <- file.path(WRK, 'output/TE_sim_eval/original/kmer/kmer_counts_k6.csv')
+garlic_kmer_paths <- file.path(WRK, sprintf('output/TE_sim_eval/Garlic_rep%d/kmer/kmer_counts_k6.csv', reps))
+m2_kmer_paths     <- file.path(WRK, sprintf('output/TE_sim_eval/tair10_ch1_m2_%d/kmer/kmer_counts_k6.csv', reps))
+m0_kmer_paths     <- file.path(WRK, sprintf('output/TE_sim_eval/tair10_ch1_m0_%d/kmer/kmer_counts_k6.csv', reps))
+
+# Read one table and reshape to long format, tagged with simulator and replicate
+read_kmer_long <- function(path, simulator, rep) {
+  read.table(path, header = TRUE, sep = ",", stringsAsFactors = FALSE) |>
+    pivot_longer(cols = c(genome, nonTE, TEonly), names_to = "Category", values_to = "Count") |>
+    mutate(simulator = simulator, rep = rep)
+}
+
 # Combine
-kmerdf <- rbind(kmer0_long, kmer1_long, kmer2_long, kmer3_long, kmer4_long)
-kmerdf$simulator <- factor(kmerdf$simulator, levels = c("Ori", "Garlic", "m2", "m2+m0", "m0full"))
+kmerdf <- dplyr::bind_rows(
+  read_kmer_long(ori_kmer_path, "Ori", 1),
+  dplyr::bind_rows(lapply(reps, function(i) read_kmer_long(garlic_kmer_paths[i], "Garlic", i))),
+  dplyr::bind_rows(lapply(reps, function(i) read_kmer_long(m2_kmer_paths[i],     "m2",     i))),
+  dplyr::bind_rows(lapply(reps, function(i) read_kmer_long(m0_kmer_paths[i],     "m2+m0",  i)))
+)
+kmerdf$simulator <- factor(kmerdf$simulator, levels = c("Ori", "Garlic", "m2", "m2+m0"))
+
+# Bin each replicate's spectrum on one shared set of breaks (so bins line up across
+# replicates), then summarise frequency per bin as mean +/- SD across replicates.
+# Empty bins are filled with 0 so they count towards the mean. Ori has n=1, so SD is NA.
+kmer_binwidth <- 2000
+kmer_breaks <- seq(0, ceiling(max(kmerdf$Count) / kmer_binwidth) * kmer_binwidth, by = kmer_binwidth)
+kmer_hist <- kmerdf |>
+  mutate(bin = cut(Count, breaks = kmer_breaks, include.lowest = TRUE, right = FALSE, labels = FALSE)) |>
+  dplyr::count(simulator, Category, rep, bin, name = "Frequency") |>
+  tidyr::complete(tidyr::nesting(simulator, rep), Category, bin = seq_len(length(kmer_breaks) - 1),
+                  fill = list(Frequency = 0)) |>
+  dplyr::group_by(simulator, Category, bin) |>
+  dplyr::summarise(mean_freq = mean(Frequency), sd_freq = sd(Frequency), n = dplyr::n(), .groups = "drop") |>
+  mutate(bin_mid = kmer_breaks[bin] + kmer_binwidth / 2)
 ```
 ```{r, fig2.06.01, echo=FALSE, fig.width = 6, fig.asp = 0.8, out.width="60%"}
 # Plot histogram (distribution of counts per category)
@@ -1718,14 +1954,14 @@ mycolor <- c('#CC9999', '#CC6666', '#993344', '#996699', '#996633',
                '#CCCC77', '#CCCC11', '#337799', '#336666', '#004499', 
                '#333366', '#CCCCCC')
 
-plot <- ggplot(kmerdf |> filter(simulator != "m0full"), aes(x = Count, fill = simulator)) +
-  geom_histogram(position = "identity", bins = 100, alpha = 0.8) +
-  scale_fill_manual(values=c('#99CCCC', '#FFCC66','#CC6666', '#99CC99')) +
+plot <- ggplot(kmer_hist, aes(x = bin_mid, y = mean_freq, fill = simulator)) +
+  geom_col(width = kmer_binwidth, alpha = 0.8) +
+  scale_fill_manual(values=c('Ori' = '#99CCCC', 'Garlic' = '#FFCC66', 'm2' = '#CC6666', 'm2+m0' = '#99CC99')) +
   facet_grid(vars(simulator), vars(Category)) +
   scale_x_continuous(breaks = seq(0, 50000, by = 10000), labels = label_number(scale = 1e-3)) +
   coord_cartesian(xlim = c(0, 50000)) +
   scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
-  labs(title = "K-mer spectrum",
+  labs(title = "K-mer spectrum (mean of n = 5 replicates)",
        x = "K-mer counts / 1000",
        y = "Frequency") +
   theme(title = element_text(size = 8),
@@ -1770,10 +2006,7 @@ jsd_between_reps_kmer <- function(rep_paths, ref_path, comparison_label, categor
   dplyr::bind_rows(rows)
 }
 
-m2_kmer_paths     <- file.path(WRK, sprintf('output/TE_sim_eval/tair10_ch1_m2_%d/kmer/kmer_counts_k6.csv', reps))
-m0_kmer_paths     <- file.path(WRK, sprintf('output/TE_sim_eval/tair10_ch1_m0_%d/kmer/kmer_counts_k6.csv', reps))
-garlic_kmer_paths <- file.path(WRK, sprintf('output/TE_sim_eval/Garlic_rep%d/kmer/kmer_counts_k6.csv', reps))
-ori_kmer_path     <- file.path(WRK, 'output/TE_sim_eval/original/kmer/kmer_counts_k6.csv')
+# m2_kmer_paths, m0_kmer_paths, garlic_kmer_paths and ori_kmer_path are defined in section 2.06
 
 jsd_kmer_results <- dplyr::bind_rows(lapply(c("genome", "nonTE", "TEonly"), function(cat){
   dplyr::bind_rows(
@@ -1923,79 +2156,57 @@ while (!is.null(dev.list()))  dev.off()
 ```
 
 ### 2.07 entropy
+Shannon entropy in sliding 1-kb windows along each sequence category (whole genome,
+non-TE, TE-only). Ori is a single genome; GARLIC/m2/m2+m0 have one set of tables per
+replicate. Window positions do not line up across replicates (each replicate has a
+different total length, and the non-TE/TE-only sequences are concatenations), so
+entropy cannot be averaged window-by-window; the plots below show replicate 1, and the
+replicate-level comparison is done on whole entropy distributions in 2.07a-c.
+
 ```{r, load_files_entropy, echo=FALSE}
-# Read CSV with read.table
-entr0g <- read.table(file.path(WRK, 'output/TE_sim_eval/original/entropy/sliding_entropy_genome.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-entr1g <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m2/entropy/sliding_entropy_genome.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-entr2g <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m0/entropy/sliding_entropy_genome.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-entr3g <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m0_full/entropy/sliding_entropy_genome.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-entr4g <- read.table(file.path(WRK, 'output/TE_sim_eval/Garlic/entropy/sliding_entropy_genome.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-entr0t <- read.table(file.path(WRK, 'output/TE_sim_eval/original/entropy/sliding_entropy_teonly.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-entr1t <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m2/entropy/sliding_entropy_teonly.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-entr2t <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m0/entropy/sliding_entropy_teonly.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-entr3t <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m0_full/entropy/sliding_entropy_teonly.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-entr4t <- read.table(file.path(WRK, 'output/TE_sim_eval/Garlic/entropy/sliding_entropy_teonly.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-entr0nt <- read.table(file.path(WRK, 'output/TE_sim_eval/original/entropy/sliding_entropy_nonte.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-entr1nt <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m2/entropy/sliding_entropy_nonte.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-entr2nt <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m0/entropy/sliding_entropy_nonte.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-entr3nt <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m0_full/entropy/sliding_entropy_nonte.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-entr4nt <- read.table(file.path(WRK, 'output/TE_sim_eval/Garlic/entropy/sliding_entropy_nonte.csv'), header = TRUE, sep = ",", stringsAsFactors = FALSE)
-# Reshape to long format
-entr0g <- entr0g |> mutate(Category = "genome", simulator = "Ori")
-entr1g <- entr1g |> mutate(Category = "genome", simulator = "m2")
-entr2g <- entr2g |> mutate(Category = "genome", simulator = "m2+m0")
-entr3g <- entr3g |> mutate(Category = "genome", simulator = "m0full")
-entr4g <- entr4g |> mutate(Category = "genome", simulator = "Garlic")
-entr0t <- entr0t |> mutate(Category = "TEonly", simulator = "Ori")
-entr1t <- entr1t |> mutate(Category = "TEonly", simulator = "m2")
-entr2t <- entr2t |> mutate(Category = "TEonly", simulator = "m2+m0")
-entr3t <- entr3t |> mutate(Category = "TEonly", simulator = "m0full")
-entr4t <- entr4t |> mutate(Category = "TEonly", simulator = "Garlic")
-entr0nt <- entr0nt |> mutate(Category = "nonTE", simulator = "Ori")
-entr1nt <- entr1nt |> mutate(Category = "nonTE", simulator = "m2")
-entr2nt <- entr2nt |> mutate(Category = "nonTE", simulator = "m2+m0")
-entr3nt <- entr3nt |> mutate(Category = "nonTE", simulator = "m0full")
-entr4nt <- entr4nt |> mutate(Category = "nonTE", simulator = "Garlic")
+# Entropy output folders: Ori is a single genome; GARLIC/m2/m2+m0 have one folder per replicate
+ori_entr_dir     <- file.path(WRK, 'output/TE_sim_eval/original/entropy')
+garlic_entr_dirs <- file.path(WRK, sprintf('output/TE_sim_eval/Garlic_rep%d/entropy', reps))
+m2_entr_dirs     <- file.path(WRK, sprintf('output/TE_sim_eval/tair10_ch1_m2_%d/entropy', reps))
+m0_entr_dirs     <- file.path(WRK, sprintf('output/TE_sim_eval/tair10_ch1_m0_%d/entropy', reps))
+
+# Read the three category tables (genome / nonTE / TEonly) from one folder,
+# tagged with category, simulator and replicate
+read_entropy_long <- function(entr_dir, simulator, rep) {
+  files <- c(genome = "sliding_entropy_genome.csv", nonTE = "sliding_entropy_nonte.csv", TEonly = "sliding_entropy_teonly.csv")
+  dplyr::bind_rows(lapply(names(files), function(cat) {
+    read.table(file.path(entr_dir, files[[cat]]), header = TRUE, sep = ",", stringsAsFactors = FALSE) |>
+      mutate(Category = cat, simulator = simulator, rep = rep)
+  }))
+}
+
 # Combine
-entrdf <- rbind(entr0g, entr1g, entr2g, entr3g, entr4g)
-entrdf <- rbind(entrdf, entr0t, entr1t, entr2t, entr3t, entr4t)
-entrdf <- rbind(entrdf, entr0nt, entr1nt, entr2nt, entr3nt, entr4nt)
-entrdf$simulator <- factor(entrdf$simulator, levels = c("Ori", "Garlic", "m2", "m2+m0", "m0full"))
+entrdf <- dplyr::bind_rows(
+  read_entropy_long(ori_entr_dir, "Ori", 1),
+  dplyr::bind_rows(lapply(reps, function(i) read_entropy_long(garlic_entr_dirs[i], "Garlic", i))),
+  dplyr::bind_rows(lapply(reps, function(i) read_entropy_long(m2_entr_dirs[i],     "m2",     i))),
+  dplyr::bind_rows(lapply(reps, function(i) read_entropy_long(m0_entr_dirs[i],     "m2+m0",  i)))
+)
+entrdf$simulator <- factor(entrdf$simulator, levels = c("Ori", "Garlic", "m2", "m2+m0"))
+
+# Zero-entropy windows are runs of N (Ori and m2 only). They stay in the line plots,
+# where they mark the gaps, but are excluded from every distribution and test below.
+entrdf_fil <- entrdf |> filter(entropy > 0)
+
+entr_colors <- c('Ori' = '#99CCCC', 'Garlic' = '#FFCC66', 'm2' = '#CC6666', 'm2+m0' = '#99CC99')
 ```
 
-```{r, test_entropy_range, echo=FALSE}
-entrdf_fil <- entrdf |> filter(simulator != "m0full") |> filter(entropy > 0)
-
-# Kruskal-Wallis test
-kruskal_res <- kruskal.test(entropy ~ simulator, data = entrdf_fil)
-kruskal_res
-
-# Pairwise post-hoc comparisons
-pairwise_res <- pairwise.wilcox.test(entrdf_fil$entropy, entrdf_fil$simulator, p.adjust.method = "BH")
-pairwise_res
-
-# Pairwise post-hoc comparisons by category
-entrdf_fil_genome <- entrdf_fil |> filter(Category == "genome")
-pairwise_res_genome <- pairwise.wilcox.test(entrdf_fil_genome$entropy, entrdf_fil_genome$simulator, p.adjust.method = "BH")
-pairwise_res_genome
-entrdf_fil_nonTE <- entrdf_fil |> filter(Category == "nonTE")
-pairwise_res_nonTE <- pairwise.wilcox.test(entrdf_fil_nonTE$entropy, entrdf_fil_nonTE$simulator, p.adjust.method = "BH")
-pairwise_res_nonTE
-entrdf_fil_TEonly <- entrdf_fil |> filter(Category == "TEonly")
-pairwise_res_TEonly <- pairwise.wilcox.test(entrdf_fil_TEonly$entropy, entrdf_fil_TEonly$simulator, p.adjust.method = "BH")
-pairwise_res_TEonly
-```
 ```{r, fig2.07.01, echo=FALSE, fig.width = 6, fig.asp = 0.8, out.width="60%"}
 plotwidth <- 6
 plotheight <- 4.8
 options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
-# Line graph
-plot <- ggplot(entrdf |> filter(simulator != "m0full"),
-       aes(x = pos/1e6, y = entropy, color = simulator)) +   # <- fill inside aes
+# Line graph (replicate 1 of each simulator; Ori has a single run labelled rep 1)
+plot <- ggplot(entrdf |> filter(rep == 1),
+       aes(x = pos/1e6, y = entropy, color = simulator)) +
   geom_line(alpha = 0.8) +
-  scale_color_manual(values = c('#99CCCC', '#FFCC66', '#CC6666', '#99CC99')) +
+  scale_color_manual(values = entr_colors) +
   facet_grid(vars(simulator), vars(Category)) +
-  labs(title = "Shannon entropy",
+  labs(title = "Shannon entropy (replicate 1 shown)",
        x = "Position (Mb)",
        y = "Entropy (bits)") +
   theme(title = element_text(size = 8),
@@ -2016,23 +2227,54 @@ print(plot)
 while (!is.null(dev.list()))  dev.off()
 ```
 
+#### Supplementary: entropy along the sequence, all 5 replicates per simulator
+```{r, fig2.07.01_supp, echo=FALSE, fig.width = 6, fig.asp = 1, out.width="60%"}
+plotwidth <- 6
+plotheight <- 6
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+file_tag <- c('Garlic' = "Garlic", 'm2' = "m2", 'm2+m0' = "m2m0")
+
+for (sim in c("Garlic", "m2", "m2+m0")) {
+  plot <- ggplot(entrdf |> filter(simulator == sim),
+         aes(x = pos/1e6, y = entropy)) +
+    geom_line(alpha = 0.8, color = entr_colors[[sim]]) +
+    facet_grid(rep ~ Category, labeller = labeller(rep = function(x) paste("rep", x))) +
+    labs(title = paste0("Shannon entropy: ", sim, " (n = 5 replicates)"),
+         x = "Position (Mb)",
+         y = "Entropy (bits)") +
+    theme(title = element_text(size = 8),
+              axis.text.y = element_text(size = rel(1.3)),
+              axis.text.x = element_text(size = rel(1.3)),
+              axis.title.x = element_text(size = rel(1.4)),
+              axis.title.y = element_text(size = rel(1.4)),
+              panel.background = element_rect(fill = "white", color = "black"))
+  print(plot)
+  png(filename = paste0(OUT, "entropy_spectrum_allreps_", file_tag[[sim]], ".png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+  print(plot)
+  while (!is.null(dev.list()))  dev.off()
+}
+```
+
+Files saved as: entropy_spectrum_allreps_Garlic.png, entropy_spectrum_allreps_m2.png,
+entropy_spectrum_allreps_m2m0.png
+
 ```{r, fig2.07.02, echo=FALSE, fig.width = 6, fig.asp = 0.8, out.width="60%"}
 plotwidth <- 6
 plotheight <- 4.8
 options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
 
-# Boxplot of entropy per Category and Simulator
+# Boxplot of entropy per Category and Simulator (replicate 1; see the per-replicate
+# check below for replicates 2-5)
 library(ggpubr)
-plot <- ggplot(entrdf_fil, aes(x = simulator, y = entropy, fill = simulator)) +
+plot <- ggplot(entrdf_fil |> filter(rep == 1), aes(x = simulator, y = entropy, fill = simulator)) +
   geom_boxplot(alpha = 0.8, outlier.size = 0.5) +
-  scale_fill_manual(values = c('#99CCCC', '#FFCC66', '#CC6666', '#99CC99')) +
-  #stat_compare_means(method = "kruskal.test", label.y = max(entrdf_fil$entropy) + 0.1) +  # global test per facet
-  stat_compare_means(method = "wilcox.test", 
-                     label = "p.signif", 
+  scale_fill_manual(values = entr_colors) +
+  stat_compare_means(method = "wilcox.test",
+                     label = "p.signif",
                      ref.group = "Ori") +             # pairwise vs Ori, per facet
   facet_wrap(~Category, scales = "free_x") +          # run stats separately per Category
   labs(
-    title = "Distribution of Shannon entropy",
+    title = "Distribution of Shannon entropy (replicate 1)",
     x = "Simulator",
     y = "Entropy (bits)"
   ) +
@@ -2056,78 +2298,167 @@ print(plot)
 while (!is.null(dev.list()))  dev.off()
 ```
 
-### 2.08 annotation recovery
-Note: detection rate (reciprocal overlap > 0.8)
-```{r, load_files_recovery, echo=FALSE}
-rcv1 <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m2/bedtools_cut08/overlap_eval_stat.txt'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
-rcv2 <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m0/bedtools_cut08/overlap_eval_stat.txt'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
-rcv4 <- read.table(file.path(WRK, 'output/TE_sim_eval/Garlic/bedtools_cut08/overlap_eval_stat.txt'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
-bin1 <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m2/bedtools_cut08/recovery_by_bin2D.tsv'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
-bin2 <- read.table(file.path(WRK, 'output/TE_sim_eval/tair10_ch1_m0/bedtools_cut08/recovery_by_bin2D.tsv'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
-bin4 <- read.table(file.path(WRK, 'output/TE_sim_eval/Garlic/bedtools_cut08/recovery_by_bin2D.tsv'), header = TRUE, sep = "\t", stringsAsFactors = FALSE)
-# Reshape to long format
-rcv1 <- rcv1 |> mutate(perc_recovery = round((1 - Ratio_non_overlap)*100, 1), simulator = "m2")
-rcv2 <- rcv2 |> mutate(perc_recovery = round((1 - Ratio_non_overlap)*100, 1), simulator = "m2+m0")
-rcv4 <- rcv4 |> mutate(perc_recovery = round((1 - Ratio_non_overlap)*100, 1), simulator = "Garlic")
-bin1 <- bin1 |> mutate(simulator = "m2")
-bin2 <- bin2 |> mutate(simulator = "m2+m0")
-bin4 <- bin4 |> mutate(simulator = "Garlic")
-# Combine
-rcvdf <- rbind(rcv1, rcv2, rcv4)
-rcvdf$simulator <- factor(rcvdf$simulator, levels = c("Garlic", "m2", "m2+m0"))
-bindf <- rbind(bin1, bin2, bin4)
-bindf$simulator <- factor(bindf$simulator, levels = c("Garlic", "m2", "m2+m0"))
+#### Check: does replicate 1 represent all 5 replicates?
+The same window-level Wilcoxon test vs Ori as in the boxplot above, run on each
+replicate separately. `signif_labels` lists the distinct star labels across the 5
+replicates (same cut-offs as `stat_compare_means`); a single label means every replicate
+gives the same result as replicate 1. These p-values are descriptive only: windows
+(~3,000-30,000 per test) are not independent, so even tiny shifts in entropy reach
+significance - the replicate-level test is in 2.07b.
+
+```{r, entropy_wilcox_by_rep, echo=FALSE}
+wilcox_signif <- function(p) as.character(cut(p, breaks = c(-Inf, 1e-4, 1e-3, 0.01, 0.05, Inf),
+                                               labels = c("****", "***", "**", "*", "ns")))
+
+entr_wilcox_by_rep <- entrdf_fil |>
+  filter(simulator != "Ori") |>
+  dplyr::group_by(Category, simulator, rep) |>
+  dplyr::summarise(
+    n_windows = dplyr::n(),
+    median_entropy = median(entropy),
+    p_value = wilcox.test(entropy, entrdf_fil$entropy[entrdf_fil$simulator == "Ori" & entrdf_fil$Category == dplyr::first(Category)])$p.value,
+    .groups = "drop") |>
+  mutate(p.signif = wilcox_signif(p_value))
+
+entr_wilcox_by_rep_summary <- entr_wilcox_by_rep |>
+  dplyr::group_by(Category, simulator) |>
+  dplyr::summarise(
+    n_reps = dplyr::n(),
+    median_entropy_min = min(median_entropy),
+    median_entropy_max = max(median_entropy),
+    p_min = min(p_value),
+    p_max = max(p_value),
+    signif_labels = paste(unique(p.signif), collapse = ", "),
+    .groups = "drop") |>
+  dplyr::left_join(entrdf_fil |> filter(simulator == "Ori") |>
+                     dplyr::group_by(Category) |>
+                     dplyr::summarise(median_entropy_ori = median(entropy), .groups = "drop"),
+                   by = "Category")
+
+write.table(entr_wilcox_by_rep, file = file.path(OUT, "entropy_wilcox_per_replicate.tsv"),
+            sep = "\t", quote = FALSE, row.names = FALSE)
+write.table(entr_wilcox_by_rep_summary, file = file.path(OUT, "entropy_wilcox_per_replicate_summary.tsv"),
+            sep = "\t", quote = FALSE, row.names = FALSE)
+
+knitr::kable(entr_wilcox_by_rep_summary |> mutate(across(c(p_min, p_max), ~ format(signif(.x, 2)))), digits = 4)
 ```
 
-```{r, fig2.08.01, echo=FALSE, fig.width = 2, fig.asp = 1.2, out.width="60%"}
-plotwidth <- 2
-plotheight <- 2.4
+Files saved as: entropy_wilcox_per_replicate.tsv, entropy_wilcox_per_replicate_summary.tsv
+
+### 2.07a Wasserstein distance: window entropy (per replicate)
+1D Wasserstein distance between each replicate's window-entropy distribution and Ori's,
+per sequence category, with zero-entropy (N-run) windows excluded. Same "single fixed
+Ori reference" design as the GARLIC/m2/m2+m0 rows in 2.05a. Reuses `wasserstein1d()`
+and `wasserstein_between_reps()` from 2.05a; the `metric` column holds the sequence
+category (genome/nonTE/TEonly), as it holds div/itg there.
+
+```{r, wasserstein_entropy, echo=FALSE}
+entr_sim_label <- c('Garlic' = "GARLIC vs Ori", 'm2' = "m2 vs Ori", 'm2+m0' = "m2+m0 vs Ori")
+
+wasserstein_entropy_results <- dplyr::bind_rows(lapply(c("genome", "nonTE", "TEonly"), function(cat){
+  ori_df <- entrdf_fil |> filter(simulator == "Ori", Category == cat)
+  dplyr::bind_rows(lapply(names(entr_sim_label), function(sim){
+    wasserstein_between_reps(entrdf_fil |> filter(simulator == sim, Category == cat), ori_df,
+                             entr_sim_label[[sim]], "entropy", single_ref = TRUE)
+  })) |> mutate(metric = cat)
+}))
+
+write.table(wasserstein_entropy_results, file = file.path(OUT, "wasserstein_entropy_per_replicate.tsv"),
+            sep = "\t", quote = FALSE, row.names = FALSE)
+
+knitr::kable(wasserstein_entropy_results, digits = 4)
+```
+
+File saved as: wasserstein_entropy_per_replicate.tsv (columns: comparison, rep, metric
+["genome"/"nonTE"/"TEonly"], wasserstein)
+
+### 2.07b Entropy Wasserstein distance: mean ± SD and significance testing
+GARLIC/m2/m2+m0 replicates were generated independently, so their distance-to-Ori
+values are compared pairwise with unpaired (two-sample Welch) t-tests, as in 2.05b.
+Reuses `tidy_ttest_dist()` from 2.03b.
+
+```{r, wasserstein_entropy_meansd_ttest, echo=FALSE}
+wasserstein_entropy_summary <- wasserstein_entropy_results |>
+  dplyr::group_by(comparison, metric) |>
+  dplyr::summarise(n = dplyr::n(), mean_wasserstein = mean(wasserstein), sd_wasserstein = sd(wasserstein), .groups = "drop")
+
+write.table(wasserstein_entropy_summary, file = file.path(OUT, "wasserstein_entropy_meansd.tsv"),
+            sep = "\t", quote = FALSE, row.names = FALSE)
+
+knitr::kable(wasserstein_entropy_summary, digits = 4)
+
+get_wasserstein_entropy_vec <- function(cmp, m) wasserstein_entropy_results |> dplyr::filter(comparison == cmp, metric == m) |> dplyr::pull(wasserstein)
+
+wasserstein_entropy_ttests <- dplyr::bind_rows(lapply(c("genome", "nonTE", "TEonly"), function(m){
+  dplyr::bind_rows(
+    tidy_ttest_dist(paste0("GARLIC vs m2 (distance-to-Ori entropy Wasserstein, ", m, ")"),
+                     x = get_wasserstein_entropy_vec("GARLIC vs Ori", m), y = get_wasserstein_entropy_vec("m2 vs Ori", m)) |>
+      dplyr::mutate(metric = m, group1 = "GARLIC vs Ori", group2 = "m2 vs Ori"),
+    tidy_ttest_dist(paste0("GARLIC vs m2+m0 (distance-to-Ori entropy Wasserstein, ", m, ")"),
+                     x = get_wasserstein_entropy_vec("GARLIC vs Ori", m), y = get_wasserstein_entropy_vec("m2+m0 vs Ori", m)) |>
+      dplyr::mutate(metric = m, group1 = "GARLIC vs Ori", group2 = "m2+m0 vs Ori"),
+    tidy_ttest_dist(paste0("m2 vs m2+m0 (distance-to-Ori entropy Wasserstein, ", m, ")"),
+                     x = get_wasserstein_entropy_vec("m2 vs Ori", m), y = get_wasserstein_entropy_vec("m2+m0 vs Ori", m)) |>
+      dplyr::mutate(metric = m, group1 = "m2 vs Ori", group2 = "m2+m0 vs Ori")
+  )
+}))
+
+write.table(wasserstein_entropy_ttests, file = file.path(OUT, "wasserstein_entropy_ttest.tsv"),
+            sep = "\t", quote = FALSE, row.names = FALSE)
+
+knitr::kable(wasserstein_entropy_ttests, digits = 4)
+```
+
+Files saved as: wasserstein_entropy_meansd.tsv, wasserstein_entropy_ttest.tsv
+
+### 2.07c Entropy Wasserstein distance: bar plots (mean ± SD, asterisk if p < 0.001)
+Same layout as the GARLIC/m2/m2+m0-vs-Ori plots in 2.05c, one per sequence category.
+Reuses `plot_wasserstein_ori_bars()` from 2.05c with the entropy tables.
+
+```{r, plot_wasserstein_entropy_genome, echo=FALSE, fig.width = 4.2, fig.asp = 0.85}
+plotwidth <- 4.2
+plotheight <- 3.57
 options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
-plot <- ggplot(rcvdf, aes(x = simulator, y = perc_recovery, fill = simulator)) +
-  geom_col(width = 0.6, alpha = 0.8) +
-  scale_fill_manual(values = c('#FFCC66', '#CC6666', '#99CC99')) +
-  geom_text(aes(label = perc_recovery), vjust = -0.5, size = 4) +
-  labs(
-    title = "TE Recovery Rate by\nRepeatMasker",
-    #x = "Simulator",
-    y = "Recovery (%)"
-  ) +
-  theme(legend.position = "none") +
-  ylim(0, 110) +
- theme(title = element_text(size = 8),
-            axis.text.y = element_text(size = rel(1.3)),
-            axis.text.x = element_text(size = rel(1.3)),#, angle = 45, hjust = 1),
-            axis.title.x = element_blank(),
-            #axis.title.x = element_text(size = rel(1.4)),
-            axis.title.y = element_text(size = rel(1.4)),
-            legend.title = element_blank(),
-            legend.text = element_text(size = rel(1)),
-            legend.key.size = unit(0.5, "cm"),
-            legend.background = element_blank(),
-            panel.background = element_rect(fill = "white", color = "black"))
+plot <- plot_wasserstein_ori_bars("genome", "Wasserstein distance\n(Entropy, whole genome)",
+                                  "Entropy distance to Ori: genome\n(mean ± SD, n=5; unpaired t-tests)",
+                                  summary_df = wasserstein_entropy_summary, ttest_df = wasserstein_entropy_ttests)
 plot
 ```
-```{r, save_fig2.08.01, echo=FALSE}
-png(filename = paste0(OUT, "repeatmasker_recovery_rate.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+
+```{r, save_plot_wasserstein_entropy_genome, echo=FALSE}
+png(filename = paste0(OUT, "wasserstein_entropy_ORIvGarlicvTEGS_genome_bars.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
 print(plot)
 while (!is.null(dev.list()))  dev.off()
 ```
 
-#### Didn't plot the following. Better to present in the original output table format.
-```{r, fig2.08.02, echo=FALSE, fig.width = 6, fig.asp = 0.8, out.width="60%"}
-ggplot(bindf, aes(x = integrity_interval, 
-               y = rate, 
-               color = divergence_interval, 
-               group = divergence_interval)) +
-  geom_line(size = 1) +
-  geom_point(size = 2) +
-  facet_grid(cols = vars(simulator)) +
-  labs(
-    title = "Recovery rate across integrity × divergence bins",
-    x = "Integrity interval",
-    y = "Recovery rate",
-    color = "Divergence interval"
-  ) +
-  theme_minimal(base_size = 14) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```{r, plot_wasserstein_entropy_nonte, echo=FALSE, fig.width = 4.2, fig.asp = 0.85}
+plotwidth <- 4.2
+plotheight <- 3.57
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot <- plot_wasserstein_ori_bars("nonTE", "Wasserstein distance\n(Entropy, non-TE regions)",
+                                  "Entropy distance to Ori: non-TE\n(mean ± SD, n=5; unpaired t-tests)",
+                                  summary_df = wasserstein_entropy_summary, ttest_df = wasserstein_entropy_ttests)
+plot
+```
+
+```{r, save_plot_wasserstein_entropy_nonte, echo=FALSE}
+png(filename = paste0(OUT, "wasserstein_entropy_ORIvGarlicvTEGS_nonTE_bars.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
+```
+
+```{r, plot_wasserstein_entropy_teonly, echo=FALSE, fig.width = 4.2, fig.asp = 0.85}
+plotwidth <- 4.2
+plotheight <- 3.57
+options(repr.plot.width=plotwidth, repr.plot.height=plotheight)
+plot <- plot_wasserstein_ori_bars("TEonly", "Wasserstein distance\n(Entropy, TE-only regions)",
+                                  "Entropy distance to Ori: TE-only\n(mean ± SD, n=5; unpaired t-tests)",
+                                  summary_df = wasserstein_entropy_summary, ttest_df = wasserstein_entropy_ttests)
+plot
+```
+
+```{r, save_plot_wasserstein_entropy_teonly, echo=FALSE}
+png(filename = paste0(OUT, "wasserstein_entropy_ORIvGarlicvTEGS_TEonly_bars.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(plot)
+while (!is.null(dev.list()))  dev.off()
 ```

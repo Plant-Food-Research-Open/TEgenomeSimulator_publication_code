@@ -1,0 +1,3 @@
+cd /workspace/${user}/script/TEgenomeSimulator_publication_code && bash script/revision/14_tair10_sensitivity_nest_beta.sh
+sbatch --cpus-per-task=1 --mem=16G -t 04:00:00 -J sens_knit -o sens_knit.%j.out -e sens_knit.%j.err --wrap "cd /workspace/cflthc/script/TEgenomeSimulator_publication_code/script/revision && Rscript -e \"rmarkdown::render('24.1_item34_35_nesting_beta_sensitivity.Rmd')\""
+Submitted batch job 11150002

@@ -1,0 +1,562 @@
+---
+title: "Full-metric benchmark of RepeatMasker on simulated genomes, complete vs. incomplete library"
+author: "Ting-Hsuan Chen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+---
+
+Revision items 23-28 (R2#5, R3-major#6, #7, #12, R3-minor#10, #16). RepeatMasker annotations of
+the five scenario 1 genomes (Fig. 3D) are scored against the simulator's ground-truth GFF with
+TEbenchtop (`15_tair10_benchmark_repeatmasker.sh`):
+
+- **mode 2**: base-pair-level TP/FP/FN, recall (sensitivity), precision, F1 and FDR, overall and
+  by TE type, and per identity x integrity slice;
+- **mode 3**: per-locus overlaps with the annotation (boundaries, coverage, number of hits).
+
+Three libraries are compared: the complete library used for simulation (`full`), and the same
+library with 25% or 50% of families removed at random (`drop25`, `drop50`; drop50 removes all of
+drop25's families plus as many again). Removing families mimics annotating a genome whose library
+lacks some families, as for non-model organisms. The evaluation only needs the annotation as a
+GFF, so the same workflow applies to any annotation tool, including de novo pipelines.
+
+```{r setup, include=FALSE}
+WRK <- "/workspace/cflthc/script/TEgenomeSimulator_publication_code" # clean up this line before git push
+SIMOUT <- file.path(WRK, "output")
+OUT <- file.path(WRK, "output/benchmark_repeatmasker/")
+dir.create(OUT, recursive = TRUE, showWarnings = FALSE)
+knitr::opts_knit$set(root.dir = OUT)
+
+reps <- 1:5
+libs <- c("full", "drop25", "drop50")
+lib_labels <- c(full = "Full library", drop25 = "25% families removed", drop50 = "50% families removed")
+lib_colors <- c("Full library" = "grey30", "25% families removed" = "#E69F00", "50% families removed" = "#D55E00")
+
+bm_dir <- function(i, lib) {
+  file.path(SIMOUT, sprintf("TEgenomeSimulator_tair10_sd_scenario1_rep%d_result", i), paste0("TEbenchtop_rm_", lib))
+}
+run_grid <- expand.grid(rep = reps, lib = libs, stringsAsFactors = FALSE)
+```
+
+```{r, load_libraries, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(fmsb)       # radar charts
+library(ggalluvial) # ribbon (alluvial) plots
+```
+
+```{r, helpers, echo=FALSE}
+gff_attr <- function(x, key) {
+  out <- sub(paste0(".*(^|;)", key, "=([^;]*).*"), "\\2", x)
+  ifelse(grepl(paste0("(^|;)", key, "="), x), out, NA_character_)
+}
+# ground-truth family name is the part of ID before '#', e.g. ID=ATCOPIA5#LTR/Copia_TE0000001
+std_family <- function(attr) sub("#.*", "", sub("^ID=", "", attr))
+te_class <- function(sf) sub("/.*", "", sf)
+lib_factor <- function(lib) factor(lib_labels[lib], levels = lib_labels)
+mean_sd <- function(df, ...) {
+  df |> dplyr::group_by(...) |>
+    dplyr::summarise(dplyr::across(where(is.numeric) & !dplyr::any_of("rep"),
+                                   list(mean = ~ mean(.x, na.rm = TRUE), sd = ~ sd(.x, na.rm = TRUE))),
+                     .groups = "drop")
+}
+
+dropped <- lapply(c(drop25 = "drop25", drop50 = "drop50"), function(lib) {
+  std_family(readLines(file.path(SIMOUT, "tair10_benchmark_libraries", paste0("dropped_families_", lib, ".txt"))))
+})
+dropped$full <- character(0)
+```
+
+## 1. Base-pair-level metrics (TEbenchtop mode 2)
+
+```{r, basic_metrics, echo=FALSE}
+basic <- dplyr::bind_rows(lapply(seq_len(nrow(run_grid)), function(k) {
+  i <- run_grid$rep[k]; lib <- run_grid$lib[k]
+  files <- list.files(file.path(bm_dir(i, lib), "m2s3_basicmetrics"), pattern = "^basic_metrics_.*\\.tsv$", full.names = TRUE)
+  dplyr::bind_rows(lapply(files, read.delim)) |> dplyr::mutate(rep = i, lib = lib)
+})) |>
+  dplyr::rename(recall = sens) |>
+  dplyr::mutate(library = lib_factor(lib))
+
+basic_summary <- basic |>
+  dplyr::select(library, type, rep, recall, prec, F1, FDR, TP, FP, FN) |>
+  mean_sd(library, type) |>
+  dplyr::arrange(type, library)
+kable(basic_summary |> dplyr::select(library, type, dplyr::starts_with(c("recall", "prec", "F1", "FDR"))), digits = 4,
+      caption = "Base-pair-level recall, precision, F1 and FDR by TE type (mean and SD of 5 replicates).")
+write.csv(basic_summary, paste0(OUT, "bm_basic_metrics_summary.csv"), row.names = FALSE)
+```
+
+Saved file name: bm_basic_metrics_summary.csv
+
+Specificity and accuracy are not shown: true negatives are dominated by the non-TE backbone, which
+inflates both. They are kept in the saved table.
+
+```{r, basic_metrics_plot, echo=FALSE, fig.width = 10, fig.asp = 0.35}
+plotwidth <- 10
+plotheight <- 3.5
+basic_plot_df <- basic |>
+  dplyr::filter(type %in% c("all", "LTR", "DNA", "RC", "LINE", "SINE")) |>
+  dplyr::select(library, type, rep, Recall = recall, Precision = prec, F1) |>
+  tidyr::pivot_longer(c(Recall, Precision, F1), names_to = "metric") |>
+  dplyr::group_by(library, type, metric) |>
+  dplyr::summarise(sd = sd(value), value = mean(value), .groups = "drop") |>
+  dplyr::mutate(type = factor(type, levels = c("all", "LTR", "DNA", "RC", "LINE", "SINE")),
+                metric = factor(metric, levels = c("Recall", "Precision", "F1")))
+
+p_basic <- ggplot(basic_plot_df, aes(x = type, y = value, fill = library)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.75) +
+  geom_errorbar(aes(ymin = pmax(value - sd, 0), ymax = pmin(value + sd, 1)), position = position_dodge(width = 0.8), width = 0.25) +
+  facet_wrap(~metric, nrow = 1) +
+  scale_fill_manual(values = lib_colors) +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_minimal(base_size = 10) +
+  theme(panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x = "TE type (RepeatMasker class)", y = "Base-pair-level value", fill = NULL)
+p_basic
+```
+
+```{r, save_basic_metrics_plot, echo=FALSE}
+png(filename = paste0(OUT, "bm_basic_metrics.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(p_basic)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file name: bm_basic_metrics.png
+
+### 1.1 Radar charts of all metrics
+
+All six metrics per TE type, one polygon per library (mean of 5 replicates). Specificity and
+accuracy are close to 1 for every library because of the large number of true-negative backbone bases.
+
+```{r, radar_prep, echo=FALSE}
+# Helper adapted from 31.02_BM_TEtrimmer.Rmd
+# https://www.datanovia.com/en/blog/beautiful-radar-chart-in-r-using-fmsb-and-ggplot-packages/
+create_beautiful_radarchart <- function(data, color = "#00AFBB", fill_alpha = 0.15,
+                                        vlabels = colnames(data), vlcex = 0.7,
+                                        caxislabels = NULL, title = NULL, ...){
+  radarchart(
+    data, axistype = 1,
+    # polygons
+    pcol = color, pfcol = scales::alpha(color, fill_alpha), plwd = 1.5, plty = 1,
+    # grid
+    cglcol = "grey", cglty = 1, cglwd = 0.8,
+    # axis
+    axislabcol = "grey",
+    # variable labels
+    vlcex = vlcex, vlabels = vlabels,
+    caxislabels = caxislabels, title = title, ...
+  )
+}
+
+radar_metrics <- c(recall = "Recall", FDR = "FDR", F1 = "F1", prec = "Precision", accu = "Accuracy", spec = "Specificity")
+radar_types <- intersect(c("all", "LTR", "DNA", "RC", "LINE", "SINE"), unique(basic$type))
+radar_means <- basic |>
+  dplyr::filter(type %in% radar_types) |>
+  dplyr::group_by(library, type) |>
+  dplyr::summarise(dplyr::across(dplyr::all_of(names(radar_metrics)), mean), .groups = "drop")
+
+draw_radar_panels <- function() {
+  op <- par(mar = c(1, 1, 1.5, 1), mfrow = c(1, length(radar_types) + 1))
+  for (tp in radar_types) {
+    vals <- radar_means |> dplyr::filter(type == tp) |> dplyr::arrange(library)
+    df <- as.data.frame(rbind(rep(1, length(radar_metrics)), rep(0, length(radar_metrics)),
+                              as.matrix(vals[, names(radar_metrics)])))
+    colnames(df) <- radar_metrics
+    create_beautiful_radarchart(df, color = lib_colors[as.character(vals$library)],
+                                caxislabels = c("0", "", "0.5", "", "1"), calcex = 0.6, title = tp)
+  }
+  plot.new()
+  legend("center", legend = names(lib_colors), col = lib_colors, lwd = 2, bty = "n", cex = 0.8)
+  par(op)
+}
+```
+
+```{r, radar_plot, echo=FALSE, fig.width = 14, fig.asp = 0.18}
+plotwidth <- 14
+plotheight <- 2.5
+draw_radar_panels()
+```
+
+```{r, save_radar_plot, echo=FALSE}
+png(filename = paste0(OUT, "bm_basic_metrics_radar.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+draw_radar_panels()
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file name: bm_basic_metrics_radar.png
+
+## 2. False positives
+
+False-positive loci are RepeatMasker hits that overlap no simulated TE. Because mode 1 inserts
+TEs into the TE-depleted TAIR10 genome, some of these hits may be TE remnants left in the backbone
+after masking rather than annotation errors; RepeatMasker on the backbone alone (full library)
+measures that baseline.
+
+```{r, false_positives, echo=FALSE}
+read_gff_lengths <- function(f) {
+  g <- read.delim(f, header = FALSE, comment.char = "#", quote = "", colClasses = c("character", "NULL", "character", "integer", "integer", rep("NULL", 4)))
+  data.frame(classification = g$V3, len = g$V5 - g$V4 + 1)
+}
+
+fp <- dplyr::bind_rows(lapply(seq_len(nrow(run_grid)), function(k) {
+  i <- run_grid$rep[k]; lib <- run_grid$lib[k]
+  g <- read_gff_lengths(file.path(bm_dir(i, lib), sprintf("fp_loci_scenario1_rep%d_rm_%s.gff3", i, lib)))
+  data.frame(rep = i, lib = lib, fp_loci = nrow(g), fp_loci_bp = sum(g$len))
+})) |>
+  dplyr::left_join(basic |> dplyr::filter(type == "all") |> dplyr::select(rep, lib, FP_bp = FP), by = c("rep", "lib")) |>
+  dplyr::mutate(library = lib_factor(lib))
+
+backbone <- read_gff_lengths(file.path(SIMOUT, "TEgenomeSimulator_tair10_result/RepeatMasker_backbone/sim_genome.fa.out.gff3"))
+
+fp_summary <- fp |> dplyr::select(-lib) |> mean_sd(library)
+kable(fp_summary, digits = 0, format.args = list(big.mark = ","),
+      caption = "False-positive loci (hits overlapping no simulated TE) and false-positive bases (mean and SD of 5 replicates).")
+cat("Backbone alone (full library):", format(nrow(backbone), big.mark = ","), "RepeatMasker hits covering",
+    format(sum(backbone$len), big.mark = ","), "bp.\n")
+write.csv(fp_summary, paste0(OUT, "bm_false_positives_summary.csv"), row.names = FALSE)
+```
+
+Saved file name: bm_false_positives_summary.csv
+
+## 3. Recall by identity and integrity (TEbenchtop mode 2 slices)
+
+```{r, slices, echo=FALSE, fig.width = 10, fig.asp = 0.35}
+plotwidth <- 10
+plotheight <- 3.5
+slices <- dplyr::bind_rows(lapply(seq_len(nrow(run_grid)), function(k) {
+  i <- run_grid$rep[k]; lib <- run_grid$lib[k]
+  f <- list.files(file.path(bm_dir(i, lib), "m2s4_metricslices"), pattern = "_identity_slices\\.tsv$", full.names = TRUE)
+  read.delim(f) |> dplyr::mutate(rep = i, lib = lib)
+})) |>
+  dplyr::mutate(library = lib_factor(lib),
+                identity_upper = as.numeric(sub(".*,([0-9.]+)\\]", "\\1", identity)),
+                integrity_upper = as.numeric(sub(".*,([0-9.]+)\\]", "\\1", integrity)))
+
+# recall per identity (or integrity) bin = sum(TP) / sum(TP + FN) over the other dimension
+slice_recall <- function(df, by) {
+  df |> dplyr::filter(!is.na(TP)) |>
+    dplyr::group_by(library, rep, bin = .data[[by]]) |>
+    dplyr::summarise(recall = sum(TP) / sum(TP + FN), .groups = "drop") |>
+    dplyr::group_by(library, bin) |>
+    dplyr::summarise(sd = sd(recall), recall = mean(recall), .groups = "drop") |>
+    dplyr::mutate(dimension = ifelse(by == "identity_upper", "Identity", "Integrity"), bin_mid = bin - 0.05)
+}
+slice_df <- dplyr::bind_rows(slice_recall(slices, "identity_upper"), slice_recall(slices, "integrity_upper"))
+
+p_slices <- ggplot(slice_df, aes(x = bin_mid, y = recall, colour = library)) +
+  geom_line() +
+  geom_point(size = 1.2) +
+  geom_errorbar(aes(ymin = pmax(recall - sd, 0), ymax = pmin(recall + sd, 1)), width = 0.02) +
+  facet_wrap(~dimension, nrow = 1) +
+  scale_colour_manual(values = lib_colors) +
+  scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.25)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_minimal(base_size = 10) +
+  theme(panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x = "Bin midpoint", y = "Base-pair-level recall", colour = NULL)
+p_slices
+write.csv(slice_df, paste0(OUT, "bm_recall_by_identity_integrity.csv"), row.names = FALSE)
+```
+
+```{r, save_slices_plot, echo=FALSE}
+png(filename = paste0(OUT, "bm_recall_by_identity_integrity.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(p_slices)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file names: bm_recall_by_identity_integrity.csv, bm_recall_by_identity_integrity.png
+
+## 4. Locus-level evaluation (TEbenchtop mode 3)
+
+For every simulated locus, the RepeatMasker hit with the largest overlap (either strand) is used
+for classification; same-strand hits are used for boundaries and fragmentation.
+
+- **Fragmentation**: number of same-strand RepeatMasker hits covering the locus (0 = missed,
+  1 = single hit, >= 2 = split into several hits).
+- **Merging**: a RepeatMasker hit overlapping two or more simulated loci.
+- **Boundary accuracy**: start/end difference (bp) between a locus and its single same-strand hit.
+- **Classification**: the best hit's family, superfamily and class compared with the simulated
+  locus. Loci whose family was removed from the library are reported separately: they can only be
+  annotated with a related family, or missed.
+
+```{r, locus_level, echo=FALSE}
+read_locus_level <- function(i, lib) {
+  bm <- bm_dir(i, lib)
+  # bedtools coverage -s of every simulated locus: 9 GFF columns + n hits, bases covered, length, fraction
+  cov <- read.delim(file.path(bm, "m3s2_calcoverage", sprintf("coverage_std_rm_%s_samestr.txt", lib)),
+                    header = FALSE, quote = "", comment.char = "",
+                    colClasses = c(rep("NULL", 8), "character", "integer", "integer", "integer", "numeric")) |>
+    stats::setNames(c("attr", "n_hits_same", "covered_bp", "length", "coverage")) |>
+    dplyr::transmute(name = gff_attr(attr, "Name"), family = std_family(attr), superfamily = gff_attr(attr, "Classification"),
+                     n_hits_same, coverage)
+  # overlapping pairs from comp_boundaries: simulated locus (9 cols), RepeatMasker hit (9 cols), overlap bp, strand, start/end diff
+  pairs <- read.delim(file.path(bm, "m3s1_comparebndry", sprintf("comp_boundaries_scenario1_rep%d_std_rm_%s.tsv", i, lib)),
+                      header = FALSE, quote = "", comment.char = "",
+                      colClasses = c(rep("NULL", 8), "character", rep("NULL", 8), "character", "integer", "character", "integer", "integer")) |>
+    stats::setNames(c("std_attr", "tst_attr", "overlap_bp", "strand", "start_diff", "end_diff")) |>
+    dplyr::transmute(name = gff_attr(std_attr, "Name"), hit_id = gff_attr(tst_attr, "ID"),
+                     hit_family = gff_attr(tst_attr, "Name"), hit_superfamily = gff_attr(tst_attr, "Classification"),
+                     overlap_bp, strand, start_diff, end_diff)
+
+  best <- pairs |> dplyr::group_by(name) |> dplyr::slice_max(overlap_bp, n = 1, with_ties = FALSE) |> dplyr::ungroup()
+  merged_hits <- pairs |> dplyr::group_by(hit_id) |> dplyr::summarise(n_loci = dplyr::n_distinct(name), .groups = "drop")
+  single_same <- pairs |> dplyr::filter(strand == "same_str") |> dplyr::semi_join(cov |> dplyr::filter(n_hits_same == 1), by = "name")
+
+  loci <- cov |>
+    dplyr::left_join(best |> dplyr::select(name, hit_id, hit_family, hit_superfamily), by = "name") |>
+    dplyr::left_join(merged_hits, by = "hit_id") |>
+    dplyr::mutate(family_status = ifelse(family %in% dropped[[lib]], "family removed", "family in library"),
+                  classification = dplyr::case_when(
+                    is.na(hit_id) ~ "not detected",
+                    hit_family == family ~ "same family",
+                    hit_superfamily == superfamily ~ "same superfamily",
+                    te_class(hit_superfamily) == te_class(superfamily) ~ "same class",
+                    TRUE ~ "different class"))
+  list(loci = loci |> dplyr::mutate(rep = i, lib = lib),
+       boundaries = single_same |> dplyr::select(start_diff, end_diff) |> dplyr::mutate(rep = i, lib = lib),
+       hits = merged_hits |> dplyr::summarise(n_hits = dplyr::n(), pct_hits_merging = 100 * mean(n_loci >= 2)) |> dplyr::mutate(rep = i, lib = lib))
+}
+
+locus_runs <- lapply(seq_len(nrow(run_grid)), function(k) read_locus_level(run_grid$rep[k], run_grid$lib[k]))
+loci <- dplyr::bind_rows(lapply(locus_runs, `[[`, "loci")) |> dplyr::mutate(library = lib_factor(lib))
+boundaries <- dplyr::bind_rows(lapply(locus_runs, `[[`, "boundaries")) |> dplyr::mutate(library = lib_factor(lib))
+hits <- dplyr::bind_rows(lapply(locus_runs, `[[`, "hits")) |> dplyr::mutate(library = lib_factor(lib))
+```
+
+### 4.1 Fragmentation, merging and boundaries
+
+```{r, fragmentation_boundaries, echo=FALSE}
+locus_summary <- loci |>
+  dplyr::group_by(library, rep) |>
+  dplyr::summarise(pct_missed = 100 * mean(n_hits_same == 0),
+                   pct_single_hit = 100 * mean(n_hits_same == 1),
+                   pct_fragmented = 100 * mean(n_hits_same >= 2),
+                   median_coverage = median(coverage), .groups = "drop") |>
+  dplyr::left_join(hits |> dplyr::select(library, rep, pct_hits_merging), by = c("library", "rep")) |>
+  dplyr::left_join(boundaries |>
+                     dplyr::group_by(library, rep) |>
+                     dplyr::summarise(pct_both_ends_within_10bp = 100 * mean(abs(start_diff) <= 10 & abs(end_diff) <= 10),
+                                      pct_both_ends_within_50bp = 100 * mean(abs(start_diff) <= 50 & abs(end_diff) <= 50),
+                                      median_abs_start_diff = median(abs(start_diff)),
+                                      median_abs_end_diff = median(abs(end_diff)), .groups = "drop"),
+                   by = c("library", "rep")) |>
+  mean_sd(library)
+kable(locus_summary, digits = 2,
+      caption = paste0("Per-locus results (mean and SD of 5 replicates): missed, single-hit and fragmented loci; ",
+                        "RepeatMasker hits merging >= 2 loci; boundary accuracy of single-hit loci."))
+write.csv(locus_summary, paste0(OUT, "bm_locus_level_summary.csv"), row.names = FALSE)
+```
+
+Saved file name: bm_locus_level_summary.csv
+
+```{r, boundary_plot, echo=FALSE, fig.width = 8, fig.asp = 0.4}
+plotwidth <- 8
+plotheight <- 3.2
+boundary_long <- boundaries |>
+  tidyr::pivot_longer(c(start_diff, end_diff), names_to = "end", values_to = "diff_bp") |>
+  dplyr::mutate(end = factor(ifelse(end == "start_diff", "5' boundary", "3' boundary"), levels = c("5' boundary", "3' boundary")),
+                abs_diff_bp = abs(diff_bp))
+# cumulative share of single-hit loci whose boundary lies within x bp of the simulated one
+p_boundary <- ggplot(boundary_long, aes(x = abs_diff_bp, colour = library)) +
+  stat_ecdf(pad = FALSE) +
+  facet_wrap(~end, nrow = 1) +
+  scale_colour_manual(values = lib_colors) +
+  coord_cartesian(xlim = c(0, 100)) +
+  scale_y_continuous(limits = c(0, 1), labels = function(x) paste0(100 * x, "%")) +
+  theme_minimal(base_size = 10) +
+  theme(panel.background = element_rect(fill = "white", color = "black")) +
+  labs(x = "Boundary error (bp)", y = "Single-hit loci within error", colour = NULL)
+p_boundary
+```
+
+```{r, save_boundary_plot, echo=FALSE}
+png(filename = paste0(OUT, "bm_boundary_differences.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(p_boundary)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file name: bm_boundary_differences.png
+
+### 4.2 Classification
+
+```{r, classification, echo=FALSE, fig.width = 8, fig.asp = 0.45}
+plotwidth <- 8
+plotheight <- 3.6
+class_levels <- c("same family", "same superfamily", "same class", "different class", "not detected")
+class_colors <- c("same family" = "#0072B2", "same superfamily" = "#56B4E9", "same class" = "#F0E442",
+                  "different class" = "#D55E00", "not detected" = "grey70")
+
+class_summary <- loci |>
+  dplyr::group_by(library, family_status, rep, classification) |>
+  dplyr::summarise(n = dplyr::n(), .groups = "drop_last") |>
+  dplyr::mutate(pct = 100 * n / sum(n)) |>
+  dplyr::group_by(library, family_status, classification) |>
+  dplyr::summarise(pct_mean = mean(pct), pct_sd = sd(pct), .groups = "drop") |>
+  dplyr::mutate(classification = factor(classification, levels = class_levels))
+kable(class_summary |> dplyr::arrange(library, family_status, classification), digits = 2,
+      caption = "Classification of the best-overlapping RepeatMasker hit per simulated locus (% of loci; mean and SD of 5 replicates).")
+write.csv(class_summary, paste0(OUT, "bm_classification_summary.csv"), row.names = FALSE)
+
+p_class <- ggplot(class_summary, aes(x = library, y = pct_mean, fill = classification)) +
+  geom_col(width = 0.7) +
+  facet_wrap(~family_status) +
+  scale_fill_manual(values = class_colors) +
+  theme_minimal(base_size = 10) +
+  theme(panel.background = element_rect(fill = "white", color = "black"),
+        axis.text.x = element_text(angle = 30, hjust = 1)) +
+  labs(x = NULL, y = "% of simulated loci", fill = NULL)
+p_class
+```
+
+```{r, save_classification_plot, echo=FALSE}
+png(filename = paste0(OUT, "bm_classification.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(p_class)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file names: bm_classification_summary.csv, bm_classification.png
+
+### 4.3 Classification by superfamily
+
+Ribbon plots and bar plots adapted from `31.02_BM_TEtrimmer.Rmd`. Each simulated locus is counted
+once, using its best-overlapping hit (loci with no hit are shown as "not detected"); counts are
+the mean per replicate. RepeatMasker labels hits with the library's own classification, which is
+the one used by the simulator, so no renaming of superfamilies is needed.
+
+```{r, superfamily_prep, echo=FALSE}
+# superfamilies ordered by class, coloured by class as in 31.02_BM_TEtrimmer.Rmd
+# (ggalluvial warns that strata appear on both axes: intended, as both axes use the same superfamily names)
+class_order <- c("LTR", "LINE", "SINE", "DNA", "RC")
+sf_levels <- loci |> dplyr::distinct(superfamily) |> dplyr::pull(superfamily)
+sf_levels <- sf_levels[order(match(te_class(sf_levels), class_order, nomatch = 99),
+                             grepl("Helitron", sf_levels), grepl("unknown", sf_levels), sf_levels)]
+class_palette <- list(LTR = rev(RColorBrewer::brewer.pal(9, "YlOrBr"))[3:8],
+                      LINE = rev(RColorBrewer::brewer.pal(9, "Purples"))[2:5],
+                      SINE = RColorBrewer::brewer.pal(11, "BrBG")[2:4],
+                      DNA = rev(RColorBrewer::brewer.pal(9, "YlGnBu"))[2:8],
+                      Helitron = rev(RColorBrewer::brewer.pal(9, "RdPu"))[4:5])
+sf_group <- ifelse(grepl("Helitron", sf_levels), "Helitron", te_class(sf_levels))
+sf_colors <- setNames(rep("grey60", length(sf_levels)), sf_levels)
+for (g in intersect(names(class_palette), sf_group)) {
+  idx <- which(sf_group == g)
+  sf_colors[idx] <- rep_len(class_palette[[g]], length(idx))
+}
+
+ribbon_df <- loci |>
+  dplyr::mutate(sim_te = factor(superfamily, levels = sf_levels),
+                anno_te = ifelse(is.na(hit_superfamily), "not detected", hit_superfamily)) |>
+  dplyr::count(library, family_status, sim_te, anno_te, name = "n") |>
+  dplyr::mutate(freq = n / length(reps))
+anno_levels <- c(sf_levels, sort(setdiff(unique(ribbon_df$anno_te), c(sf_levels, "not detected"))), "not detected")
+ribbon_df$anno_te <- factor(ribbon_df$anno_te, levels = anno_levels)
+write.csv(ribbon_df, paste0(OUT, "bm_classification_by_superfamily.csv"), row.names = FALSE)
+
+plot_ribbon <- function(df, title) {
+  label_min <- 0.02 * max(tapply(df$freq, df$library, sum)) # label strata with >= 2% of loci
+  ggplot(df, aes(axis1 = sim_te, axis2 = anno_te, y = freq)) +
+    # key_glyph = "rect" takes the legend key from the loaded ggplot2; ggalluvial's own copy breaks when it was
+    # installed under a different ggplot2 version (error: could not find function "gg_par")
+    geom_alluvium(aes(fill = sim_te), key_glyph = "rect") +
+    geom_stratum(alpha = .5, width = 1/4, show.legend = FALSE) +
+    geom_text(stat = "stratum", aes(label = after_stat(stratum)), size = 2.5, min.y = label_min, color = "black") +
+    facet_wrap(~library, nrow = 1, drop = TRUE) +
+    scale_fill_manual(values = sf_colors, name = "Simulated superfamily", drop = TRUE) +
+    scale_x_discrete(limits = c("sim_te", "anno_te"), labels = c("Simulated", "RepeatMasker"),
+                     expand = c(0.15, 0.05)) +
+    ggtitle(title) +
+    ylab("Simulated loci per genome") +
+    theme(axis.title.x = element_blank(),
+          legend.key.size = unit(0.4, "cm"),
+          legend.background = element_blank(),
+          panel.background = element_rect(fill = "white", color = "gray30"))
+}
+```
+
+```{r, ribbon_all, echo=FALSE, warning=FALSE, fig.width = 14, fig.asp = 0.5}
+plotwidth <- 14
+plotheight <- 7
+p_ribbon_all <- plot_ribbon(ribbon_df, "Superfamily of each simulated locus vs. its best RepeatMasker hit (all loci)")
+p_ribbon_all
+```
+
+```{r, save_ribbon_all, echo=FALSE, warning=FALSE}
+png(filename = paste0(OUT, "bm_classification_ribbon_all.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(p_ribbon_all)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file name: bm_classification_ribbon_all.png
+
+Loci of the removed families only (drop25 and drop50): these can only be annotated with a
+related family, or missed.
+
+```{r, ribbon_removed, echo=FALSE, warning=FALSE, fig.width = 10, fig.asp = 0.6}
+plotwidth <- 10
+plotheight <- 6
+removed_df <- ribbon_df |> dplyr::filter(family_status == "family removed") |> droplevels()
+p_ribbon_removed <- plot_ribbon(removed_df, "Loci of families removed from the library")
+p_ribbon_removed
+```
+
+```{r, save_ribbon_removed, echo=FALSE, warning=FALSE}
+png(filename = paste0(OUT, "bm_classification_ribbon_removed_families.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(p_ribbon_removed)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file name: bm_classification_ribbon_removed_families.png
+
+```{r, superfamily_barplot, echo=FALSE, fig.width = 12, fig.asp = 0.6}
+plotwidth <- 12
+plotheight <- 7.2
+sf_bar_df <- loci |>
+  dplyr::count(library, superfamily, classification, name = "n") |>
+  dplyr::group_by(library, superfamily) |>
+  dplyr::mutate(n_loci = sum(n), perc = n / n_loci) |>
+  dplyr::ungroup() |>
+  dplyr::mutate(superfamily = factor(superfamily, levels = sf_levels),
+                classification = factor(classification, levels = class_levels),
+                label = ifelse(perc > 0.05, paste0(round(100 * perc), "%"), ""))
+write.csv(sf_bar_df, paste0(OUT, "bm_classification_by_superfamily_barplot.csv"), row.names = FALSE)
+
+p_sf_bar <- ggplot(sf_bar_df, aes(x = superfamily, y = perc, fill = classification)) +
+  geom_col(position = position_stack(reverse = TRUE), color = "white", width = 0.85) +
+  geom_text(aes(label = label), position = position_stack(vjust = 0.5, reverse = TRUE),
+            size = 2.5, color = "white", fontface = "bold") +
+  coord_flip() +
+  facet_wrap(~library, nrow = 1) +
+  scale_x_discrete(limits = rev) +
+  scale_y_continuous(labels = function(x) paste0(100 * x, "%"), breaks = c(0, 0.5, 1)) +
+  scale_fill_manual(values = class_colors, name = NULL) +
+  ggtitle("TE classification", "Best RepeatMasker hit per simulated locus, by simulated superfamily (5 replicates pooled)") +
+  ylab("% of simulated loci") +
+  theme(axis.title.y = element_blank(),
+        legend.position = "bottom",
+        legend.key.size = unit(0.4, "cm"),
+        panel.background = element_rect(fill = "white", color = "gray30"))
+p_sf_bar
+```
+
+```{r, save_superfamily_barplot, echo=FALSE}
+png(filename = paste0(OUT, "bm_classification_by_superfamily_barplot.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(p_sf_bar)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file names: bm_classification_by_superfamily.csv, bm_classification_by_superfamily_barplot.csv,
+bm_classification_by_superfamily_barplot.png
+
+## 5. Notes
+
+- Nested insertions (R3-minor#16, item 28) are analysed in
+  `24.1_item34_35_nesting_beta_sensitivity.Rmd`.
+- Base-pair-level metrics do not depend on an overlap threshold; the reciprocal-overlap
+  threshold check (item 26) is a separate analysis.
+- Removed families are the same in every replicate (one fixed random order), so differences
+  between replicates reflect the simulated genomes, not the choice of families.

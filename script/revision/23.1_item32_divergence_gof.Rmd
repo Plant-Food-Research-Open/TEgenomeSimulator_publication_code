@@ -1,0 +1,486 @@
+---
+title: "Divergence distribution goodness-of-fit vs. the Gaussian identity-draw assumption"
+author: "Ting-Hsuan Chen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    highlight: tango
+---
+
+This script covers two closely related revision items that share the same input data (the five
+validation species' real RepeatMasker per-locus records, `processed_output.temp`, already used
+for item 31):
+
+- **Item 32** (R1#2, R1#7): fit skew-normal and gamma distributions, alongside the Gaussian
+  currently assumed by modes 0/1/2's identity draw, to the empirical per-family/per-genome
+  divergence data, and report KS-statistic/AIC/BIC goodness-of-fit.
+- **Item 36** (R2#3): before/after sensitivity check on the `identity_fix` ascertainment-bias
+  adjustment (`identity + (100 - identity) * 0.5`) that TEgenomeSimulator <= v1.0.0 applied on
+  top of the raw Gaussian draw in `TE_sim_random_insertion.py`'s `generate_sequence()` (and in
+  `TE_sim_nested_insertion.py`) - show the identity distribution pre- and post-adjustment against
+  the real empirical distribution. The adjustment has since been removed from the simulator
+  (commit `efa3369`), partly on the basis of this comparison; the current simulator mutates each
+  copy with the raw Gaussian draw directly, so section 3 documents the former behaviour.
+
+Only the **real (original) genome** RepeatMasker data is used below - not mode-2 simulated
+output - because both items ask whether the simulator's generative assumption (a Gaussian, and
+formerly the `identity_fix` transform) matches real biology, not whether the simulator
+reproduces its own input parameters.
+
+How to run:
+`sbatch --cpus-per-task=5 --mem=48G -t 1-00:00:00 -J gof_knit -o gof_knit.%j.out -e gof_knit.%j.err --wrap "cd /workspace/cflthc/script/TEgenomeSimulator_publication_code/script/revision && Rscript -e \"rmarkdown::render('23.1_item32_divergence_gof.Rmd')\""`
+
+## 0. Setup directory
+### 0.1 Setup genome name and directory
+```{r setup, include=FALSE}
+genomename1a <- 'tair10_original'
+genomename2a <- 'rice_original'
+genomename3a <- 'maize_original'
+genomename4a <- 'dm6_original'
+genomename5a <- 'danio_original'
+
+WRK <- "/workspace/cflthc/script"
+setwd(WRK)
+# results re-generated after the identity sampling/reporting fix
+SIM1 <- file.path(WRK, "TEgenomeSimulator_publication_code/output/TEgenomeSimulator_tair10_result/")
+SIM2 <- file.path(WRK, "TEgenomeSimulator_publication_code/output/TEgenomeSimulator_rice_result/")
+SIM3 <- file.path(WRK, "TEgenomeSimulator_publication_code/output/TEgenomeSimulator_maize_result/")
+SIM4 <- file.path(WRK, "TEgenomeSimulator_publication_code/output/TEgenomeSimulator_dm6_result/")
+SIM5 <- file.path(WRK, "TEgenomeSimulator_publication_code/output/TEgenomeSimulator_danio_result/")
+
+OUT <- file.path(WRK, "TEgenomeSimulator_publication_code/output/divergence_gof/")
+dir.create(file.path(OUT), recursive = TRUE, showWarnings = FALSE)
+knitr::opts_knit$set(root.dir=OUT)
+
+# Minimum copy number for a family to get its own fit; families below this
+# are only included in the genome-pooled fit (section 2.2).
+MIN_FAMILY_N <- 30
+
+# Per-family fits are limited to the TOP_N_FAMILY most abundant families (by copy
+# number) of each superfamily, and only for superfamilies holding at least
+# MIN_SUPERFAMILY_PROP of a genome's loci. A relative threshold is used instead of a
+# fixed count (e.g. 1,000 loci) so small genomes keep their main superfamilies
+# (tair10 LTR/Copia, dm6 LTR/Copia) while danio's many minor ones are dropped.
+TOP_N_FAMILY <- 10
+MIN_SUPERFAMILY_PROP <- 0.01
+
+# Superfamily labels left out of the per-family fits (still in the genome-pooled fit):
+# class-only or unclassified labels ("DNA", "LTR", "Unknown", "LINE/unknown", "SINE?")
+# and non-TE repeats (satellites, simple repeats, rDNA, knobs, centromeric and
+# subtelomeric repeats, endogenous viruses).
+GENERIC_SF_REGEX <- "^[^/]*$|unknown|\\?"
+NON_TE_SF_REGEX <- "^(Satellite|Simple_repeat|Low_complexity|rDNA|rRNA|tRNA|snRNA|scRNA|srpRNA|knob|Cent|Centro|subtelomere|Evirus)(/|$)"
+
+# Fits use a random sample of at most MAX_FIT_N loci per group (fixed seed, so the
+# same sample is drawn on every knit); the full n is reported alongside n_fit.
+MAX_FIT_N <- 20000
+FIT_SEED <- 20261102
+
+# Genomes are processed in parallel (one forked R process per genome)
+N_CORES <- 5
+```
+
+### 0.2 Load libraries
+```{r, load_libraries, include=FALSE}
+# New dependencies for this script, not used elsewhere in the pipeline yet:
+# fitdistrplus (MLE fitting + gofstat()) and sn (skew-normal dsn/psn, used by
+# fitdistrplus when fitting distribution = "sn"). Installed on demand.
+if (!requireNamespace("fitdistrplus", quietly = TRUE)) install.packages("fitdistrplus")
+if (!requireNamespace("sn", quietly = TRUE)) install.packages("sn")
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(fitdistrplus)
+library(sn)
+source(file.path(WRK, "TEgenomeSimulator_publication_code/script/functions.R"))
+```
+
+## 1. Load real per-locus data for the five validation genomes
+
+Same `processed_output.temp` files as item 31 (`identity` is a 0-1 match fraction; `div = 1 -
+identity`). `family` and `superfamily` are already present as columns in this file, so no
+GFF-breakdown step is needed here.
+
+```{r, load_files_real, include=FALSE}
+rmout1 <- read.table(paste0(SIM1, 'processed_output.temp'), header = T, sep = '\t', comment.char = "") |>
+  dplyr::mutate(div = as.numeric(1 - identity), identity_pct = as.numeric(identity) * 100)
+rmout2 <- read.table(paste0(SIM2, 'processed_output.temp'), header = T, sep = '\t', comment.char = "") |>
+  dplyr::mutate(div = as.numeric(1 - identity), identity_pct = as.numeric(identity) * 100)
+rmout3 <- read.table(paste0(SIM3, 'processed_output.temp'), header = T, sep = '\t', comment.char = "") |>
+  dplyr::mutate(div = as.numeric(1 - identity), identity_pct = as.numeric(identity) * 100)
+rmout4 <- read.table(paste0(SIM4, 'processed_output.temp'), header = T, sep = '\t', comment.char = "") |>
+  dplyr::mutate(div = as.numeric(1 - identity), identity_pct = as.numeric(identity) * 100)
+rmout5 <- read.table(paste0(SIM5, 'processed_output.temp'), header = T, sep = '\t', comment.char = "") |>
+  dplyr::mutate(div = as.numeric(1 - identity), identity_pct = as.numeric(identity) * 100)
+
+genomes <- c("tair10", "rice", "maize", "dm6", "danio")
+ori_list <- list(rmout1, rmout2, rmout3, rmout4, rmout5)
+names(ori_list) <- genomes
+```
+
+## 2. Item 32: distribution fitting and goodness-of-fit
+
+### 2.1 Family-level fitting (top `r TOP_N_FAMILY` families per superfamily)
+
+Per-family fits cover the `r TOP_N_FAMILY` most abundant families (by copy number, N >=
+`r MIN_FAMILY_N`) of each superfamily that holds >= `r MIN_SUPERFAMILY_PROP * 100`% of a
+genome's loci. Class-only or unclassified labels ("DNA", "LTR", "Unknown", "*/unknown", "SINE?")
+and non-TE repeats (satellites, simple repeats, rDNA, knobs, centromeric/subtelomeric repeats,
+endogenous viruses) are left out of the per-family fits but stay in the genome-pooled fit
+(section 2.2). Groups larger than `r format(MAX_FIT_N, big.mark = ",")` loci are fitted on a
+random sample of that size (fixed seed); `n` is the full number of loci and `n_fit` the number
+fitted.
+
+Selecting the most abundant families favours families with many copies, which tend to have
+smoother, more regular divergence distributions than rare families. The coverage table below
+gives the share of each genome's loci that the selected families represent, so the scope of the
+family-level results is explicit.
+
+Reviewer 1 named maize Gypsy/Copia specifically - these are flagged separately in the summary
+table (`superfamily` matches "Gypsy"/"Copia", case-insensitive) so they are easy to find without
+scanning the full table.
+
+```{r, gof_helpers, echo=FALSE}
+# Fit on at most MAX_FIT_N loci; set.seed() per group, so the sample does not depend on
+# which forked process or in which order the group is fitted
+subsample_for_fit <- function(x){
+  if (length(x) <= MAX_FIT_N) return(x)
+  set.seed(FIT_SEED)
+  sample(x, MAX_FIT_N)
+}
+
+# gof_table_for_group() reports n = length of the vector it fits; keep that as n_fit and
+# report the full group size as n
+gof_table_subsampled <- function(x, group, genome){
+  x <- x[is.finite(x)]
+  res <- gof_table_for_group(subsample_for_fit(x), group = group, genome = genome)
+  if (is.null(res)) return(NULL)
+  res |> dplyr::rename(n_fit = n) |> dplyr::mutate(n = length(x), .after = group)
+}
+
+excluded_superfamily <- function(sf){
+  grepl(GENERIC_SF_REGEX, sf, ignore.case = TRUE) | grepl(NON_TE_SF_REGEX, sf, ignore.case = TRUE)
+}
+
+# One row per selected family: top TOP_N_FAMILY families (N >= MIN_FAMILY_N) of each
+# retained superfamily
+select_gof_families <- function(df){
+  sf_counts <- df |> dplyr::count(superfamily, name = "sf_n") |> dplyr::mutate(sf_prop = sf_n / nrow(df))
+  df |>
+    dplyr::count(superfamily, family, name = "n") |>
+    dplyr::left_join(sf_counts, by = "superfamily") |>
+    dplyr::filter(!excluded_superfamily(superfamily), sf_prop >= MIN_SUPERFAMILY_PROP, n >= MIN_FAMILY_N) |>
+    dplyr::group_by(superfamily) |>
+    dplyr::slice_max(n, n = TOP_N_FAMILY, with_ties = FALSE) |>
+    dplyr::ungroup()
+}
+
+# mclapply returns try-error objects instead of stopping; surface them
+check_mclapply <- function(res){
+  failed <- vapply(res, inherits, logical(1), what = "try-error")
+  if (any(failed)) stop("parallel fit failed: ", paste(unlist(res[failed]), collapse = "\n"))
+  res
+}
+
+gof_families <- lapply(ori_list, function(df){
+  select_gof_families(df |> dplyr::filter(is.finite(div), !is.na(family), family != ""))
+})
+```
+
+```{r, gof_family_coverage, echo=FALSE}
+gof_coverage <- do.call(rbind, lapply(genomes, function(g){
+  df <- ori_list[[g]] |> dplyr::filter(is.finite(div))
+  sel <- gof_families[[g]]
+  retained_sf_loci <- sum(dplyr::distinct(sel, superfamily, sf_n)$sf_n)
+  data.frame(genome = g,
+             total_loci = nrow(df),
+             n_superfamilies = dplyr::n_distinct(sel$superfamily),
+             n_families = nrow(sel),
+             loci_in_selected_families = sum(sel$n),
+             pct_loci_covered = 100 * sum(sel$n) / nrow(df),
+             loci_in_retained_superfamilies = retained_sf_loci,
+             pct_of_retained_superfamilies = 100 * sum(sel$n) / retained_sf_loci)
+}))
+kable(gof_coverage, digits = 1, format.args = list(big.mark = ","),
+      caption = "Families selected for per-family fitting and the share of each genome's loci they cover.")
+write.csv(gof_coverage, paste0(OUT, "gof_family_coverage.csv"), row.names = FALSE)
+```
+
+Saved file name: gof_family_coverage.csv
+
+```{r, gof_family_compute, echo=FALSE, cache=TRUE, cache.extra = list(MIN_FAMILY_N, TOP_N_FAMILY, MIN_SUPERFAMILY_PROP, MAX_FIT_N, FIT_SEED, GENERIC_SF_REGEX, NON_TE_SF_REGEX)}
+gof_family_results <- do.call(rbind, check_mclapply(parallel::mclapply(genomes, function(g){
+  df <- ori_list[[g]] |> dplyr::filter(is.finite(div), !is.na(family), family != "")
+  sel <- gof_families[[g]]
+
+  do.call(rbind, lapply(seq_len(nrow(sel)), function(i){
+    x <- df |> dplyr::filter(family == sel$family[i], superfamily == sel$superfamily[i]) |> dplyr::pull(div)
+    res <- gof_table_subsampled(x, group = sel$family[i], genome = g)
+    if (!is.null(res)) res$superfamily <- sel$superfamily[i]
+    res
+  }))
+}, mc.cores = N_CORES)))
+
+# Flag maize Gypsy/Copia rows for easy lookup
+gof_family_results <- gof_family_results |>
+  dplyr::mutate(flag_reviewer_named = genome == "maize" & grepl("Gypsy|Copia", superfamily, ignore.case = TRUE))
+
+write.csv(gof_family_results, paste0(OUT, "gof_family_level.csv"), row.names = FALSE)
+```
+
+```{r, gof_family_table, echo=FALSE}
+# used by the per-family plots (2.3) and the item 36 comparison (section 3)
+maize_named_families <- gof_family_results |>
+  dplyr::filter(flag_reviewer_named) |>
+  dplyr::distinct(group) |>
+  dplyr::pull(group)
+
+# The full per-family table (3 rows per family) is too long to print; it is saved to
+# gof_family_level.csv. Print a per-genome summary of the best-fitting distribution instead.
+gof_family_best <- gof_family_results |>
+  dplyr::group_by(genome, group, superfamily) |>
+  dplyr::summarise(best = distribution[which.min(aic)],
+                   delta_aic_norm = aic[distribution == "norm"][1] - min(aic),
+                   ks_norm = ks_stat[distribution == "norm"][1],
+                   ks_best = ks_stat[which.min(aic)], .groups = "drop")
+gof_family_summary <- dplyr::bind_rows(gof_family_best, gof_family_best |> dplyr::mutate(genome = "all")) |>
+  dplyr::group_by(genome) |>
+  dplyr::summarise(n_families = dplyr::n(),
+                   pct_best_norm = 100 * mean(best == "norm"),
+                   pct_best_sn = 100 * mean(best == "sn"),
+                   pct_best_gamma = 100 * mean(best == "gamma"),
+                   pct_norm_delta_aic_gt10 = 100 * mean(delta_aic_norm > 10, na.rm = TRUE),
+                   median_delta_aic_norm = median(delta_aic_norm, na.rm = TRUE),
+                   median_ks_norm = median(ks_norm, na.rm = TRUE),
+                   median_ks_best = median(ks_best, na.rm = TRUE), .groups = "drop") |>
+  dplyr::arrange(factor(genome, levels = c(genomes, "all")))
+kable(gof_family_summary, digits = c(0, 0, 1, 1, 1, 1, 1, 3, 3),
+      caption = paste0("Per-family goodness-of-fit summary (top ", TOP_N_FAMILY, " families per superfamily): ",
+                        "share of families best fitted (lowest AIC) by each distribution, share where the ",
+                        "Gaussian is > 10 AIC units worse than the best, and median KS statistics."))
+write.csv(gof_family_summary, paste0(OUT, "gof_family_summary.csv"), row.names = FALSE)
+```
+
+Saved file names: gof_family_level.csv (full per-family table, not printed), gof_family_summary.csv
+
+### 2.2 Genome-pooled fitting (all loci, including families not fitted individually)
+
+```{r, gof_pooled_compute, echo=FALSE, cache=TRUE, cache.extra = list(MIN_FAMILY_N, TOP_N_FAMILY, MIN_SUPERFAMILY_PROP, MAX_FIT_N, FIT_SEED, GENERIC_SF_REGEX, NON_TE_SF_REGEX)}
+gof_pooled_results <- do.call(rbind, check_mclapply(parallel::mclapply(genomes, function(g){
+  x <- ori_list[[g]] |> dplyr::filter(is.finite(div)) |> dplyr::pull(div)
+  gof_table_subsampled(x, group = "(genome-pooled)", genome = g)
+}, mc.cores = N_CORES)))
+
+write.csv(gof_pooled_results, paste0(OUT, "gof_genome_pooled.csv"), row.names = FALSE)
+```
+
+```{r, gof_pooled_table, echo=FALSE}
+kable(gof_pooled_results |> dplyr::arrange(genome, distribution), digits = 4,
+      caption = "Goodness-of-fit (Gaussian vs. skew-normal vs. gamma) for whole-genome-pooled real divergence distributions.")
+```
+
+Saved file name: gof_genome_pooled.csv
+
+### 2.3 Fit-overlay figures
+
+One figure per genome-pooled distribution. Histograms show all loci; fitted curves come from
+the same subsample used in section 2.2.
+
+```{r, gof_plots_pooled, echo=FALSE, fig.width = 6, fig.asp = .67, out.width="60%", results = "asis"}
+for (g in genomes) {
+  x <- ori_list[[g]] |> dplyr::filter(is.finite(div)) |> dplyr::pull(div)
+  fits <- fit_divergence_distributions(subsample_for_fit(x))
+  p <- plot_gof_overlay(x, fits, paste0("Genome: ", g, " (pooled, n=", length(x), ")"))
+
+  png(filename = paste0(OUT, "gof_overlay_pooled_", g, ".png"), width = 6, height = 4, units = "in", res = 1200)
+  print(p)
+  while (!is.null(dev.list()))  dev.off()
+
+  cat("\n\n#### ", g, " (pooled)\n\n")
+  print(p)
+  cat("\n\nSaved file name: gof_overlay_pooled_", g, ".png\n\n", sep = "")
+}
+```
+
+##### Skip the following code blocks
+These two code blocks generate one graph per selected TE family (set `eval=TRUE` to run them).
+```{r, gof_plots_maize_named, eval=FALSE, echo=FALSE, fig.width = 6, fig.asp = .67, out.width="60%", results = "asis"}
+for (fam in maize_named_families) {
+  x <- rmout3 |> dplyr::filter(family == fam, is.finite(div)) |> dplyr::pull(div)
+  fits <- fit_divergence_distributions(subsample_for_fit(x))
+  sfam <- unique(rmout3$superfamily[rmout3$family == fam])[1]
+  p <- plot_gof_overlay(x, fits, paste0("maize family: ", fam, " (", sfam, ", n=", length(x), ")"))
+
+  safe_fam <- gsub("[^A-Za-z0-9_.-]", "_", fam)
+  png(filename = paste0(OUT, "gof_overlay_maize_", safe_fam, ".png"), width = 6, height = 4, units = "in", res = 1200)
+  print(p)
+  while (!is.null(dev.list()))  dev.off()
+
+  cat("\n\n#### maize: ", fam, " (", sfam, ")\n\n")
+  print(p)
+  cat("\n\nSaved file name: gof_overlay_maize_", safe_fam, ".png\n\n", sep = "")
+}
+```
+
+```{r, gof_plots_all_families_save, eval=FALSE, echo=FALSE, include=FALSE}
+# Save (but do not print inline) fit-overlay figures for every selected family,
+# for supplementary material / manual review.
+for (g in genomes) {
+  df <- ori_list[[g]] |> dplyr::filter(is.finite(div), !is.na(family), family != "")
+  sel <- gof_families[[g]]
+
+  for (i in seq_len(nrow(sel))) {
+    fam <- sel$family[i]
+    x <- df |> dplyr::filter(family == fam, superfamily == sel$superfamily[i]) |> dplyr::pull(div)
+    fits <- fit_divergence_distributions(subsample_for_fit(x))
+    if (length(fits) == 0) next
+    p <- plot_gof_overlay(x, fits, paste0(g, " family: ", fam, " (n=", length(x), ")"))
+
+    safe_fam <- gsub("[^A-Za-z0-9_.-]", "_", fam)
+    png(filename = paste0(OUT, "gof_overlay_", g, "_", safe_fam, ".png"), width = 6, height = 4, units = "in", res = 1200)
+    print(p)
+    while (!is.null(dev.list()))  dev.off()
+  }
+}
+```
+
+## 3. Item 36: former `identity_fix` adjustment, before/after comparison
+
+`identity_fix` was applied by TEgenomeSimulator <= v1.0.0 and has since been removed (commit
+`efa3369`): the current simulator mutates each copy with the raw Gaussian draw ("raw draw"
+below), so "post-fix" is the former behaviour, kept here as the before/after evidence for
+R2#3.
+
+For each genome (pooled) and the maize Gypsy/Copia families named by Reviewer 1, draw simulated
+identity values from `rnorm(mean_identity_pct, sd_identity_pct)` using that group's own real
+mean/SD (the same statistic mode 2 would estimate), replicate `get_identity()`'s
+resample-if-over-100 and truncate-to-integer behaviour (the current simulator also resamples
+draws below 0, which never occur at these means/SDs), then apply the former `identity_fix`
+transform and compare all three curves (real / raw draw / post-fix) on the percent-divergence
+scale.
+
+```{r, identity_fix_compute, echo=FALSE}
+set.seed(20260917)  # reproducible draws; not a claim about the simulator's own RNG seeding
+
+identity_fix_groups <- rbind(
+  data.frame(genome = genomes, group = "(genome-pooled)", stringsAsFactors = FALSE),
+  data.frame(genome = "maize", group = maize_named_families, stringsAsFactors = FALSE)
+)
+
+identity_fix_summary <- do.call(rbind, lapply(seq_len(nrow(identity_fix_groups)), function(i){
+  g <- identity_fix_groups$genome[i]
+  grp <- identity_fix_groups$group[i]
+
+  df <- ori_list[[g]]
+  real_pct <- if (grp == "(genome-pooled)") {
+    df |> dplyr::filter(is.finite(identity_pct)) |> dplyr::pull(identity_pct)
+  } else {
+    df |> dplyr::filter(family == grp, is.finite(identity_pct)) |> dplyr::pull(identity_pct)
+  }
+
+  n_sim <- min(length(real_pct), 5000)  # cap for speed on the largest genomes (e.g. danio)
+  sim_draws <- simulate_identity_draws(n_sim, mean(real_pct), stats::sd(real_pct))
+
+  p <- plot_identity_fix_comparison(real_pct, sim_draws,
+                                     paste0(g, ": ", grp, " (n_real=", length(real_pct), ", n_sim=", n_sim, ")"))
+  # legend: "raw draw" is the current simulator, "post identity_fix" the former (<= v1.0.0) adjustment
+  p <- suppressMessages(p + scale_fill_manual(
+    values = c("Real (empirical)" = "grey40",
+               "Simulated (raw Gaussian draw)" = "#336699",
+               "Simulated (post identity_fix)" = "#CC3333"),
+    labels = c("Real (empirical)" = "Real (RepeatMasker)",
+               "Simulated (raw Gaussian draw)" = "Gaussian draw (TEGS)",
+               "Simulated (post identity_fix)" = "Identity_fix (dnvTEe)")))
+  safe_grp <- gsub("[^A-Za-z0-9_.-]", "_", grp)
+  png(filename = paste0(OUT, "identity_fix_comparison_", g, "_", safe_grp, ".png"), width = 6, height = 4, units = "in", res = 1200)
+  print(p)
+  while (!is.null(dev.list()))  dev.off()
+
+  data.frame(
+    genome = g,
+    group = grp,
+    n_real = length(real_pct),
+    mean_identity_real = mean(real_pct),
+    sd_identity_real = stats::sd(real_pct),
+    mean_identity_raw_draw = mean(sim_draws$raw),
+    sd_identity_raw_draw = stats::sd(sim_draws$raw),
+    mean_identity_post_fix = mean(sim_draws$post_fix),
+    sd_identity_post_fix = stats::sd(sim_draws$post_fix),
+    ks_real_vs_raw = unname(suppressWarnings(stats::ks.test(real_pct, sim_draws$raw)$statistic)),
+    ks_real_vs_post_fix = unname(suppressWarnings(stats::ks.test(real_pct, sim_draws$post_fix)$statistic))
+  )
+}))
+rownames(identity_fix_summary) <- NULL
+
+write.csv(identity_fix_summary, paste0(OUT, "identity_fix_comparison_summary.csv"), row.names = FALSE)
+```
+
+```{r, identity_fix_table, echo=FALSE}
+kable(identity_fix_summary, digits = 3,
+      caption = paste0("Mean/SD of real identity vs. simulated raw Gaussian draw (current simulator) vs. ",
+                        "post-identity_fix draw (former adjustment, <= v1.0.0), and KS statistic of each ",
+                        "simulated distribution against the real one. identity_fix is a fixed affine transform ",
+                        "(y = 0.5x + 50), so it halves the SD and shifts the mean toward 100 without changing ",
+                        "distribution shape - it does not address any tail-heaviness/skewness gap, it only ",
+                        "narrows and relocates the (still-Gaussian) draw."))
+```
+
+Saved file name: identity_fix_comparison_summary.csv
+
+### 3.1 Comparison figures
+
+Genome-pooled comparisons only; the maize Gypsy/Copia family figures are saved to `OUT`
+(`identity_fix_comparison_maize_<family>.png`) but not shown here.
+
+```{r, identity_fix_plots, echo=FALSE, fig.width = 6, fig.asp = .67, out.width="60%", results = "asis"}
+for (i in which(identity_fix_groups$group == "(genome-pooled)")) {
+  g <- identity_fix_groups$genome[i]
+  grp <- identity_fix_groups$group[i]
+  safe_grp <- gsub("[^A-Za-z0-9_.-]", "_", grp)
+  fname <- paste0(OUT, "identity_fix_comparison_", g, "_", safe_grp, ".png")
+
+  cat("\n\n#### ", g, ": ", grp, "\n\n")
+  cat("![](", fname, ")\n\n", sep = "")
+  cat("Saved file name: identity_fix_comparison_", g, "_", safe_grp, ".png\n\n", sep = "")
+}
+```
+
+## 4. Notes / caveats for the manuscript response
+
+- The empirical divergence data used for both the GOF fitting (section 2) and the
+  `identity_fix` comparison (section 3) is itself measured by RepeatMasker on the real genomes.
+  RepeatMasker's detection sensitivity is known to decline at high divergence, so this empirical
+  distribution is likely right-censored - it probably under-represents the most divergent,
+  hardest-to-detect relics. Any deviation from Gaussian reported here should therefore be read
+  as a conservative (lower-bound) estimate of the true mismatch between the Gaussian assumption
+  and real biology.
+- KS statistics in section 2 are reported without p-values, since `gofstat()`'s asymptotic KS
+  null distribution assumes known (not MLE-fitted) parameters. AIC/BIC (which do not have this
+  issue) are the primary basis for ranking the three candidate distributions; the KS statistic
+  is reported as a descriptive effect-size alongside them.
+- `identity_fix` (item 36) was a deterministic affine transform of the raw Gaussian draw
+  (`y = 0.5x + 50`), so it was analytically still Gaussian - it could not fix a shape mismatch
+  (skewness/heavy tail) reported in section 2; it only shifted and narrowed the draw. Section 3's
+  summary table confirms this empirically (post-fix SD ~= 0.5 x raw-draw SD), and shows the
+  post-fix draw sits much further from the real distribution than the raw draw. The adjustment
+  was therefore removed from the simulator (commit `efa3369`, after v1.0.0); all revised
+  simulations use the raw draw, and the identity in the output GFF is the identity used to
+  mutate the copy.
+- Per-family fits cover only the `r TOP_N_FAMILY` most abundant families of each retained
+  superfamily (`r round(min(gof_coverage$pct_loci_covered))`-`r round(max(gof_coverage$pct_loci_covered))`%
+  of each genome's loci; see the coverage table in section 2.1). Abundant families tend to have
+  smoother, more regular divergence distributions than rare ones, so the family-level results
+  describe the families that dominate each genome rather than every family. The genome-pooled
+  fits (section 2.2) use all loci.
+- Groups with more than `r format(MAX_FIT_N, big.mark = ",")` loci are fitted on a random
+  sample of that size (fixed seed); at that sample size the AIC/BIC ranking and the KS
+  statistic are stable, and the full n is reported alongside n_fit.

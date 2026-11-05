@@ -1,0 +1,154 @@
+---
+title: "Sensitivity of RepeatMasker recovery rate to the reciprocal-overlap threshold"
+author: "Ting-Hsuan Chen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+---
+
+Revision item 26 (R3-minor#10). The Fig. 5 recovery rate counts a simulated TE as recovered when a
+RepeatMasker hit overlaps it reciprocally by >= 80%. The same RepeatMasker output (four Fig. 3D
+scenarios, replicates 1-5) is re-evaluated at 50%, 70%, 80% and 90% reciprocal overlap
+(`16_tair10_overlap_threshold_sweep.sh`). Base-pair-level recall and precision, which need no
+threshold, are reported in `25.1_item23_28_benchmark_repeatmasker.Rmd`.
+
+```{r setup, include=FALSE}
+WRK <- "/workspace/cflthc/script/TEgenomeSimulator_publication_code" # clean up this line before git push
+SIMOUT <- file.path(WRK, "output")
+OUT <- file.path(WRK, "output/tair10_overlap_threshold/")
+dir.create(OUT, recursive = TRUE, showWarnings = FALSE)
+knitr::opts_knit$set(root.dir = OUT)
+
+scenarios <- 1:4
+reps <- 1:5
+thresholds <- c(50, 70, 80, 90)
+threshold_colors <- c("50%" = "#C6DBEF", "70%" = "#6BAED6", "80%" = "#2171B5", "90%" = "#08306B")
+
+sim_dir <- function(n, i) file.path(SIMOUT, sprintf("TEgenomeSimulator_tair10_sd_scenario%d_rep%d_result", n, i))
+```
+
+```{r, load_libraries, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+```
+
+## 1. Load recovery tables
+
+```{r, load_files, echo=FALSE}
+read_bins <- function(n, i, eval_dir) {
+  read.delim(file.path(sim_dir(n, i), eval_dir, "recovery_by_bin2D.tsv"), stringsAsFactors = FALSE) |>
+    dplyr::mutate(scenario = paste0("scenario", n), rep = i)
+}
+grid <- expand.grid(scenario = scenarios, rep = reps, threshold = thresholds)
+bins <- dplyr::bind_rows(lapply(seq_len(nrow(grid)), function(k) {
+  read_bins(grid$scenario[k], grid$rep[k], paste0("RM_recovery_eval_f", grid$threshold[k])) |>
+    dplyr::mutate(threshold = grid$threshold[k])
+})) |>
+  dplyr::mutate(threshold_label = factor(paste0(threshold, "%"), levels = names(threshold_colors)))
+
+# the 80% rerun should reproduce the Fig. 5 evaluation (RM_recovery_eval/)
+orig80 <- dplyr::bind_rows(lapply(seq_len(nrow(grid |> dplyr::filter(threshold == 80))), function(k) {
+  g <- grid |> dplyr::filter(threshold == 80)
+  read_bins(g$scenario[k], g$rep[k], "RM_recovery_eval")
+}))
+check80 <- dplyr::inner_join(orig80, bins |> dplyr::filter(threshold == 80),
+                             by = c("scenario", "rep", "integrity_interval", "identity_interval"),
+                             suffix = c("_fig5", "_sweep"))
+cat("80% sweep identical to the Fig. 5 evaluation:",
+    nrow(check80) == nrow(orig80) && all(check80$total_fig5 == check80$total_sweep) &&
+      all(check80$recovered_fig5 == check80$recovered_sweep), "\n")
+```
+
+## 2. Overall recovery rate by threshold
+
+```{r, overall, echo=FALSE}
+overall_rep <- bins |>
+  dplyr::group_by(scenario, threshold_label, rep) |>
+  dplyr::summarise(rate = sum(recovered) / sum(total), .groups = "drop")
+overall <- overall_rep |>
+  dplyr::group_by(scenario, threshold_label) |>
+  dplyr::summarise(rate_mean = mean(rate), rate_sd = sd(rate), .groups = "drop")
+kable(overall |> tidyr::pivot_wider(id_cols = scenario, names_from = threshold_label,
+                                    values_from = c(rate_mean, rate_sd), names_vary = "slowest"),
+      digits = 3, caption = "Overall recovery rate (pooled over bins) by reciprocal-overlap threshold (mean and SD of 5 replicates).")
+write.csv(overall, paste0(OUT, "overlap_threshold_overall.csv"), row.names = FALSE)
+```
+
+Saved file name: overlap_threshold_overall.csv
+
+## 3. Recovery by identity and integrity slice
+
+Pooled recovery rate of each identity (or integrity) slice within a replicate, then mean and SD
+across replicates, as in the Fig. 5 marginal bar plots. Slices are shown when they contain at least
+one simulated TE in every replicate.
+
+```{r, marginals, echo=FALSE}
+slice_rate <- function(slice_col, dimension) {
+  bins |>
+    dplyr::group_by(scenario, threshold_label, rep, slice = .data[[slice_col]]) |>
+    dplyr::summarise(total = sum(total), recovered = sum(recovered), .groups = "drop") |>
+    dplyr::group_by(scenario, threshold_label, slice) |>
+    dplyr::filter(all(total > 0)) |>
+    dplyr::summarise(n_mean = mean(total), sd = sd(recovered / total), rate = mean(recovered / total), .groups = "drop") |>
+    dplyr::mutate(dimension = dimension)
+}
+marg <- dplyr::bind_rows(slice_rate("identity_interval", "Identity"), slice_rate("integrity_interval", "Integrity"))
+write.csv(marg, paste0(OUT, "overlap_threshold_by_slice.csv"), row.names = FALSE)
+
+# change in rate when moving from 80% to 50% or 90%, per slice
+marg_delta <- marg |>
+  dplyr::select(scenario, dimension, slice, threshold_label, rate) |>
+  tidyr::pivot_wider(names_from = threshold_label, values_from = rate) |>
+  dplyr::mutate(delta_50_vs_80 = `50%` - `80%`, delta_90_vs_80 = `90%` - `80%`)
+kable(marg_delta |> dplyr::group_by(scenario, dimension) |>
+        dplyr::summarise(max_gain_at_50 = max(delta_50_vs_80), max_loss_at_90 = min(delta_90_vs_80), .groups = "drop"),
+      digits = 3, caption = "Largest change of a slice's recovery rate relative to the 80% threshold.")
+write.csv(marg_delta, paste0(OUT, "overlap_threshold_by_slice_delta.csv"), row.names = FALSE)
+```
+
+Saved file names: overlap_threshold_by_slice.csv, overlap_threshold_by_slice_delta.csv
+
+```{r, marginal_plot, echo=FALSE, fig.width = 14, fig.asp = 0.6}
+plotwidth <- 14
+plotheight <- 8.4
+# all ten bins on every panel (empty bins appear as gaps), so panels stay aligned across scenarios;
+# the interval strings, e.g. "[0.6-0.7)", sort in bin order and are used as labels
+slice_bins <- sort(unique(c(bins$identity_interval, bins$integrity_interval)))
+
+p_marg <- ggplot(marg, aes(x = slice, y = rate, colour = threshold_label, group = threshold_label)) +
+  geom_line() +
+  geom_point(size = 1.2) +
+  geom_errorbar(aes(ymin = pmax(rate - sd, 0), ymax = pmin(rate + sd, 1)), width = 0.3) +
+  facet_grid(dimension ~ scenario) +
+  scale_colour_manual(values = threshold_colors, name = "Reciprocal\noverlap") +
+  scale_x_discrete(limits = slice_bins) +
+  scale_y_continuous(limits = c(0, 1)) +
+  theme_minimal(base_size = 15) +
+  theme(panel.background = element_rect(fill = "white", color = "black"),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        strip.text = element_text(size = rel(1.1))) +
+  labs(x = "Bin (identity in the top row, integrity in the bottom row)",
+       y = "Recovery rate")
+p_marg
+```
+
+```{r, save_marginal_plot, echo=FALSE}
+png(filename = paste0(OUT, "overlap_threshold_by_slice.png"), width = plotwidth, height = plotheight, units = "in", res = 1200)
+print(p_marg)
+while (!is.null(dev.list()))  dev.off()
+```
+
+Saved file name: overlap_threshold_by_slice.png
+
+## 4. Notes
+
+- The evaluation is strand- and family-agnostic, as in Fig. 5: any RepeatMasker hit with the
+  required reciprocal overlap counts. Family and superfamily accuracy are in
+  `25.1_item23_28_benchmark_repeatmasker.Rmd` (scenario 1).
+- Lower thresholds accept hits that cover only part of a fragmented copy, or hits that extend well
+  beyond it; higher thresholds require nearly exact boundaries.
